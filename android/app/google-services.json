@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "160138226265",
+    "project_id": "mm-gst-billing-4821",
+    "storage_bucket": "mm-gst-billing-4821.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:160138226265:android:e8bbd675593903f5039f48",
+        "android_client_info": {
+          "package_name": "com.mmmobiles.gst"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "160138226265-vph4fdl6lfvn7l3hnn7bjh1e5mvou95e.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mmmobiles.gst",
+            "certificate_hash": "ee6a7ebb3f78a498038e9fabd973d51380082824"
+          }
+        },
+        {
+          "client_id": "160138226265-dud206r68q3o3gts9bcfvlsmrh6smipk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDAlfxz_v_tXcaYL1-A0mBFvNEtsn-ShdY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "160138226265-dud206r68q3o3gts9bcfvlsmrh6smipk.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

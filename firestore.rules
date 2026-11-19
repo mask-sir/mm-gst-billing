@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Security rules for MM GST Billing. Deploy with:  firebase deploy --only firestore:rules
+//  - Every shop lives at shops/{ownerUid}. Only the owner and the staff emails listed in `members` can read or write it.
+//  - At most 3 devices can be registered on a shop at once (the `devices` map), and at most 4 staff accounts.
+//  - Staff can register / remove devices, but only the owner can change the staff list or shop name.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function isOwner(shopId) { return signedIn() && request.auth.uid == shopId; }
+    // Emails in `members` are stored in lower case, exactly as Google puts them in the sign-in token.
+    function isStaff(data) { return verified() && request.auth.token.email in data.members; }
+    function canUse(shopId) { return isOwner(shopId) || isStaff(get(/databases/$(database)/documents/shops/$(shopId)).data); }
+    function limitsOk(data) { return data.members is list && data.members.size() <= 4 && data.devices is map && data.devices.size() <= 3; }
+
+    match /shops/{shopId} {
+      allow read: if isOwner(shopId) || isStaff(resource.data);
+      allow create: if isOwner(shopId) && request.resource.data.ownerUid == request.auth.uid && limitsOk(request.resource.data);
+      allow update: if limitsOk(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && (isOwner(shopId) || (isStaff(resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['devices'])));
+      allow delete: if false;
+
+      match /invoices/{invoiceId} {
+        allow read, write: if canUse(shopId);
+      }
+      match /products/{productId} {
+        allow read, write: if canUse(shopId);
+      }
+      match /meta/{docId} {
+        allow read, write: if canUse(shopId) && docId in ['settings', 'counters'];
+      }
+    }
+  }
+}

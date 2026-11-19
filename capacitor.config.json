@@ -1,0 +1,22 @@
+{
+  "appId": "com.mmmobiles.gst",
+  "appName": "MM GST Invoice",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "includePlugins": [
+      "@capacitor/preferences",
+      "@capacitor/filesystem",
+      "@capacitor-community/file-opener",
+      "@capacitor-firebase/authentication"
+    ]
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
+  }
+}
