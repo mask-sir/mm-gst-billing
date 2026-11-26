@@ -5,6 +5,9 @@ Sign in with Google to keep bills in sync live on up to **3 devices** (phones an
 
 ## Features
 
+**Layout**: on a computer, a sidebar with *New sale*, Home, Bills, Customers, Items, Reports and Settings, and a search box for bills at the top. On a phone, a bottom bar with Home, Bills, a round **New sale** button, Items and **Menu** (Customers, Reports and every settings page). The new-sale screen has the customer, items, payment and narration in separate sections, a bar at the bottom with the total and **Save**, and New / PDF / Print / WhatsApp next to it (under ⋯ on a phone, where *Details* and *Preview* switch between the form and the bill).
+
+
 - **Billing**: GST-inclusive prices, several items per bill, IMEI/serial per item, per-item discount, 0/3/5/12/18/28 % GST
 - **CGST + SGST or IGST**: choose "Other state" for inter-state sales; customer GSTIN for B2B bills
 - **Payments**: cash / UPI / card / bank / credit. Part payments, balance due, and "Receive payment" later
@@ -67,7 +70,7 @@ Sync uses Google Firebase. The free "Spark" plan is plenty for a shop.
 ### How sync works
 
 - Sign in with the **same Google account** on up to 3 devices. Each device shows a **Synced** badge, and a bill saved on one device appears on the others within a second or two.
-- **Staff**: the owner can add staff Gmail addresses (Settings → Google sign-in & sync → Staff accounts). Staff sign in with their own Google account and work in the owner's shop. They count toward the 3-device limit.
+- **Staff**: the owner can add staff Gmail addresses (Settings → Sign-in, sync & staff; on a phone: Menu → Sign-in, sync & staff). Staff sign in with their own Google account and work in the owner's shop. They count toward the 3-device limit.
 - **Device limit**: a 4th device is asked to remove one of the others first. You can see and remove devices from Settings. A removed device is signed out right away. Signing out frees that device's slot.
 - **Offline**: synced bills stay available offline, and edits and payments made offline sync when the internet is back. Creating a *new* bill needs a moment of internet, so that two devices can never get the same invoice number.
 - **Existing bills**: the first time you sign in on a device that already has bills, the app offers to copy them into the synced shop. Duplicates are skipped.
@@ -147,6 +150,7 @@ Then add `emulators: { host: '127.0.0.1' }` to the config object in `public/fire
 | `public/index.html`, `public/styles.css` | Screens and styles |
 | `public/js/app.js` | Screens, billing form, reports, sign-in flow |
 | `public/js/util.js` | GST maths, invoice numbering, data clean-up and migration |
+| `public/js/icons.js` | Line icons used by the screens |
 | `public/js/pdf.js` | Invoice PDF (no library, works offline) |
 | `public/js/store-local.js` | Saving on this device (server `data/`, Android storage, or browser storage) |
 | `public/js/cloud.js` | Google sign-in, Firestore sync, device slots, staff |

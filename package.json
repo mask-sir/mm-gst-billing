@@ -1,6 +1,6 @@
 {
   "name": "mm-gst-invoice",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "GST billing software for MM Mobiles with Google sign-in and multi-device sync",
   "scripts": {

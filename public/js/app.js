@@ -1,13 +1,14 @@
 import {
   $, esc, format, money, dateForDisplay, today, numberToWords, calcInvoice, paymentStatus, validateInvoice, cleanText, cleanProduct,
   cleanSettings, migrateInvoice, financialYear, formatInvoiceNo, nextCounter, GST_RATES, PAYMENT_MODES, ITEM_DEFAULTS, BUSINESS_DEFAULTS, csvCell, uid,
-  profileOf, profileSettings, cleanItemNo, nextItemNo, FINANCE_TEMPLATE, NARRATION_MAX, financeNarration, financeValues, swapFigures, paymentLabel, ordinal, cleanFinances, MAX_FINANCES
+  profileOf, profileSettings, cleanItemNo, nextItemNo, calcItem, FINANCE_TEMPLATE, NARRATION_MAX, financeNarration, financeValues, swapFigures, paymentLabel, ordinal, cleanFinances, MAX_FINANCES
 } from './util.js';
 import { barcodeSvg, isBarcodeText } from './barcode.js';
 import { LocalStore } from './store-local.js';
 import { Cloud, CloudStore, MAX_DEVICES, MAX_STAFF, friendlyError } from './cloud.js';
 import { makeInvoicePdf, makeLabelsPdf, saveFile, invoiceFilename } from './pdf.js';
 import { signatureFromFile, signatureForPdf } from './signature.js';
+import { icon, fillIcons } from './icons.js';
 import { APP_VERSION } from './version.js';
 import { findUpdate, downloadAndInstall, openInstaller, removeDownloadedApk, plainNotes, isNativeApp, RELEASES_PAGE } from './update.js';
 
@@ -34,6 +35,8 @@ const ofActive = record => profileOf(record) === activeProfile();
 const myInvoices = () => S().invoices.filter(ofActive);
 const myProducts = () => S().products.filter(ofActive);
 
+fillIcons();
+const isPhone = () => window.matchMedia('(max-width: 899px)').matches;
 const initials = name => (String(name).match(/\b[A-Za-z0-9]/g) || ['?']).slice(0, 2).join('').toUpperCase();
 const SHOP_COLORS = { main: '#0a6f65', second: '#4338ca' };
 function applyProfileUI() {
@@ -64,7 +67,7 @@ $('brandBtn').addEventListener('click', () => { if (secondEnabled()) openShopMen
 document.addEventListener('click', e => { if (!$('shopMenu').hidden && !e.target.closest('.brand-wrap')) openShopMenu(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('shopMenu').hidden) { openShopMenu(false); $('brandBtn').focus(); } });
 $('shopMenu').addEventListener('click', async e => {
-  if (e.target.closest('[data-shop-settings]')) { openShopMenu(false); show('settings'); $('secondShopForm').scrollIntoView({ block: 'start' }); return; }
+  if (e.target.closest('[data-shop-settings]')) { openShopMenu(false); showSettings('second'); return; }
   const id = e.target.closest('[data-profile]')?.dataset.profile; if (!id) return;
   openShopMenu(false);
   if (id === activeProfile()) return;
@@ -108,19 +111,54 @@ async function confirmBox(title, text, ok = 'OK', danger = false) {
 /* =========================================================================
    Navigation
    ========================================================================= */
+// Views: dashboard (Home), billing (New sale), bills, customers, products (Items), reports, settings, and menu (phone).
+// On a phone, Customers, Reports and Settings live under Menu in the bottom bar.
+const MENU_VIEWS = ['customers', 'reports', 'settings', 'menu'];
 function show(view) {
   currentView = view;
-  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === view || (b.dataset.view === 'menu' && MENU_VIEWS.includes(view))));
   document.querySelectorAll('main > .view').forEach(v => { v.hidden = v.dataset.view !== view; });
-  if (view === 'billing' && !editing && !formDirty) refreshInvoiceNo();
+  [...document.body.classList].filter(c => c.startsWith('view-')).forEach(c => document.body.classList.remove(c));
+  document.body.classList.add(`view-${view}`);
+  if (view === 'billing') { setBillingPane('form'); if (!editing && !formDirty) refreshInvoiceNo(); }
+  closeTools();
   renderView();
   window.scrollTo({ top: 0 });
 }
-document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
-document.addEventListener('click', e => { const go = e.target.closest('[data-go]'); if (go) { if (go.dataset.go === 'billing' && editing) newInvoice(); show(go.dataset.go); } });
+// "New sale" starts a fresh bill if a saved bill is open; an unsaved new bill is kept.
+document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', () => { if (b.hasAttribute('data-new-sale') && editing) newInvoice(); show(b.dataset.view); }));
+document.addEventListener('click', e => {
+  const go = e.target.closest('[data-go]');
+  if (go) { if (go.dataset.go === 'billing' && editing) newInvoice(); show(go.dataset.go); return; }
+  const quick = e.target.closest('[data-quick]')?.dataset.quick;
+  if (quick === 'collect') { setBillFilter('open'); $('billSearch').value = ''; show('bills'); }
+  if (quick === 'add-item') { show('products'); openProductDialog(); }
+  if (quick === 'labels') { show('products'); if (myProducts().length) $('printLabels').click(); else toast('Add items first, then print their labels.'); }
+  const section = e.target.closest('[data-settings]')?.dataset.settings;
+  if (section) showSettings(section);
+});
 function renderView() {
-  ({ dashboard: renderDashboard, billing: renderPreview, bills: renderBills, customers: renderCustomers, products: renderProducts, reports: renderReports, settings: renderCloudPanel })[currentView]?.();
+  ({ dashboard: renderDashboard, billing: renderPreview, bills: renderBills, customers: renderCustomers, products: renderProducts, reports: renderReports, settings: renderSettings, menu: renderAppPanel })[currentView]?.();
 }
+// Search box in the top bar (computer): searches bills.
+$('globalSearch').addEventListener('input', () => {
+  $('billSearch').value = $('globalSearch').value; setBillFilter(''); billLimit = 100;
+  if (currentView !== 'bills') show('bills'); else renderBills();
+});
+
+/* ---------- New sale: Details / Preview tabs (phone + small screens) and the actions menu in the save bar ---------- */
+function setBillingPane(pane) {
+  $('billingGrid').dataset.pane = pane;
+  $('billingTabs').querySelectorAll('[data-pane]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.pane === pane)));
+}
+$('billingTabs').addEventListener('click', e => { const pane = e.target.closest('[data-pane]')?.dataset.pane; if (pane) { setBillingPane(pane); window.scrollTo({ top: 0 }); } });
+function closeTools() { $('billTools').classList.remove('open'); $('toolsToggle').setAttribute('aria-expanded', 'false'); }
+$('toolsToggle').addEventListener('click', e => {
+  e.stopPropagation();
+  const open = !$('billTools').classList.contains('open');
+  $('billTools').classList.toggle('open', open); $('toolsToggle').setAttribute('aria-expanded', String(open));
+});
+document.addEventListener('click', e => { if (!e.target.closest('#toolsToggle')) closeTools(); });
 
 /* =========================================================================
    Billing form
@@ -133,19 +171,33 @@ function createItemRow(item = {}) {
   const row = document.createElement('div'); row.className = 'item-row';
   const tax = Number(item.taxRate ?? ITEM_DEFAULTS.taxRate);
   row.innerHTML = `
-    <label class="wide ac">Item<input class="it-model" maxlength="150" placeholder="${P().gst ? 'e.g. Y11 5G 4+64 SUNRISE' : 'Type a code (e.g. A) or item name'}" value="${esc(item.model || '')}"><div class="ac-list" hidden></div></label>
-    <label class="gst-only">HSN<input class="it-hsn" maxlength="20" value="${esc(item.hsn ?? ITEM_DEFAULTS.hsn)}"></label>
-    <label>IMEI / serial<input class="it-imei" inputmode="numeric" maxlength="15" placeholder="15 digits" value="${esc(item.imei || '')}"></label>
-    <label>Qty<input class="it-qty" type="number" min="1" max="9999" value="${item.quantity || 1}"></label>
-    <label>Price<span class="gst-only">&nbsp;incl. GST</span><input class="it-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${item.price ?? ''}"></label>
-    <label>Discount ₹<input class="it-disc" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" value="${item.discount || ''}"></label>
-    <label class="gst-only">GST<select class="it-tax">${GST_RATES.map(r => `<option value="${r}" ${r === tax ? 'selected' : ''}>${r}%</option>`).join('')}</select></label>
-    <button type="button" class="remove-item" aria-label="Remove item" title="Remove item">✕</button>`;
+    <div class="it-top"><span class="it-no"></span><label class="ac">Item<input class="it-model" maxlength="150" placeholder="${P().gst ? 'e.g. Y11 5G 4+64 SUNRISE' : 'Type a code (e.g. A) or item name'}" value="${esc(item.model || '')}"><div class="ac-list" hidden></div></label></div>
+    <div class="it-grid">
+      <label>Qty<input class="it-qty" type="number" min="1" max="9999" inputmode="numeric" value="${item.quantity || 1}"></label>
+      <label><span>Price<span class="gst-only"> incl. GST</span></span><input class="it-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" value="${item.price ?? ''}"></label>
+      <label>Discount ₹<input class="it-disc" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" value="${item.discount || ''}"></label>
+      <label class="gst-only">GST<select class="it-tax">${GST_RATES.map(r => `<option value="${r}" ${r === tax ? 'selected' : ''}>${r}%</option>`).join('')}</select></label>
+      <label class="it-imei-l">IMEI / serial<input class="it-imei" inputmode="numeric" maxlength="15" placeholder="15 digits" value="${esc(item.imei || '')}"></label>
+      <label class="gst-only">HSN<input class="it-hsn" maxlength="20" value="${esc(item.hsn ?? ITEM_DEFAULTS.hsn)}"></label>
+    </div>
+    <div class="it-foot">Amount <span class="it-total"></span></div>
+    <button type="button" class="remove-item" aria-label="Remove item" title="Remove item">${icon('trash', 17)}</button>`;
   row.querySelector('.remove-item').addEventListener('click', () => { row.remove(); updateRemoveButtons(); changed(); });
   wireProductAutocomplete(row);
   return row;
 }
 function updateRemoveButtons() { const rows = [...$('itemRows').children]; rows.forEach(r => { r.querySelector('.remove-item').disabled = rows.length <= 1; }); }
+// Row numbers, each row's amount, and the item count.
+function updateItemRowsUI() {
+  const rows = [...$('itemRows').children];
+  rows.forEach((r, i) => {
+    r.querySelector('.it-no').textContent = i + 1;
+    const line = calcItem({ price: Number(r.querySelector('.it-price').value) || 0, quantity: Math.floor(Number(r.querySelector('.it-qty').value) || 0), discount: Number(r.querySelector('.it-disc').value) || 0, taxRate: 0 });
+    r.querySelector('.it-total').textContent = money(line.lineTotal);
+  });
+  const named = rows.filter(r => r.querySelector('.it-model').value.trim()).length;
+  $('itemCount').textContent = named ? `${named} item${named === 1 ? '' : 's'}` : '';
+}
 function readItems(noGst = false) {
   return [...$('itemRows').children].map(r => ({
     model: cleanText(r.querySelector('.it-model').value, 150), hsn: cleanText(r.querySelector('.it-hsn').value, 20) || ITEM_DEFAULTS.hsn,
@@ -257,6 +309,7 @@ function setForm(inv) {
   autoNarration = filled && (inv.notes || '').endsWith(filled) ? filled : '';
   narrationFigures = inv.finance ? financeValues(inv) : null;
   receivedTouched = Boolean(inv.payment); formDirty = false;
+  $('customerMore').open = Boolean(inv.customer?.address || inv.customer?.gstin || inv.supplyType === 'inter');
   toggleInter(); toggleFinance(); updateBanner(); renderPreview();
 }
 function newInvoice() {
@@ -272,9 +325,14 @@ function refreshInvoiceNo() {
   $('invoiceNo').value = formatInvoiceNo(s, year, nextCounter(S().counters, S().invoices, year, s, profile));
   if (currentView === 'billing') renderPreview();
 }
-function toggleInter() { document.querySelectorAll('.inter-only').forEach(el => { el.hidden = $('supplyType').value !== 'inter'; }); }
+function toggleInter() {
+  const inter = $('supplyType').value === 'inter';
+  document.querySelectorAll('.inter-only').forEach(el => { el.hidden = !inter; });
+  if (inter) $('customerMore').open = true;
+}
 function updateBanner() {
   const b = $('editBanner');
+  $('saleTitle').textContent = editing ? (editing.status === 'cancelled' ? 'Cancelled bill' : 'Sale invoice') : 'New sale';
   if (!editing) { b.hidden = true; $('saveInvoice').textContent = 'Save bill'; return; }
   b.hidden = false;
   b.innerHTML = `Editing <strong>${esc(editing.invoiceNo)}</strong>${editing.status === 'cancelled' ? ' — <span class="badge cancelled">Cancelled</span>' : ''}<span class="spacer"></span><button type="button" class="secondary small" id="dupBtn">Copy as new bill</button><button type="button" class="secondary small" id="closeEdit">Close</button>`;
@@ -310,7 +368,7 @@ $('invoiceForm').addEventListener('submit', async e => {
       toast(`Bill ${saved.invoiceNo} saved ${store.where}.`);
       adjustStock(saved.items, -1);
     }
-    editing = saved; setForm(saved); setStatus(`${saved.invoiceNo} saved ${store.where}.`);
+    editing = saved; setForm(saved); setStatus(''); // the toast says it was saved, and the button says Saved ✓
   } catch (error) { setStatus(friendlyError(error), 'error'); }
   finally { btn.disabled = false; updateBanner(); }
 });
@@ -365,6 +423,13 @@ function renderPreview() {
   syncNarration(inv); inv.notes = cleanText($('notes').value, NARRATION_MAX);
   const t = calcInvoice(inv), len = $('notes').value.length;
   $('balanceDue').value = format(t.balance);
+  // Save bar + header
+  $('barTotal').textContent = money(t.grandTotal);
+  const bal = $('barBalance');
+  bal.className = t.balance > 0.004 ? 'due-text' : '';
+  bal.textContent = inv.status === 'cancelled' ? 'Cancelled' : t.balance > 0.004 ? `Balance ${money(t.balance)}` : t.grandTotal > 0 ? (t.financeAmount > 0 ? `Down ${money(t.downPayment)} + finance ${money(t.financeAmount)}` : 'Fully paid') : '';
+  $('saleSub').textContent = `${inv.invoiceNo || ''} · ${dateForDisplay(inv.date)}`;
+  updateItemRowsUI();
   $('narrationCount').textContent = len > NARRATION_MAX * 0.8 ? `${len} / ${NARRATION_MAX}` : '';
   const g = !inv.noGst; // GST bill (main shop) or plain bill (second shop)
   const taxCells = it => g ? `<td class="num">${it.taxRate}%</td><td class="num">${format(it.net)}</td>${t.inter ? `<td class="num">${format(it.igst)}</td>` : `<td class="num">${format(it.cgst)}</td><td class="num">${format(it.sgst)}</td>`}` : '';
@@ -392,7 +457,7 @@ function renderPreview() {
 function customerDirectory() {
   const map = new Map();
   for (const inv of myInvoices().sort((a, b) => (a.date || '').localeCompare(b.date || ''))) {
-    const phone = (inv.customer?.phone || '').replace(/\s/g, ''), name = (inv.customer?.name || '').trim(), key = phone || name.toLowerCase();
+    const name = (inv.customer?.name || '').trim(), key = customerKeyOf(inv);
     if (!key) continue;
     const t = calcInvoice(inv), c = map.get(key) || { key, name, phone: inv.customer.phone, count: 0, total: 0, due: 0, last: '', customer: inv.customer };
     if (inv.status !== 'cancelled') { c.count++; c.total += t.grandTotal; c.due += t.balance; }
@@ -418,6 +483,7 @@ function attachList(input, list, getMatches, onPick) {
 function pickCustomer(c) {
   $('customerName').value = c.name || ''; $('phone').value = c.customer.phone || ''; $('address').value = c.customer.address || ''; $('customerGstin').value = c.customer.gstin || '';
   if (c.customer.stateCode && P().gst) { $('supplyType').value = 'inter'; $('customerState').value = c.customer.state || ''; $('customerStateCode').value = c.customer.stateCode; toggleInter(); }
+  if (c.customer.address || c.customer.gstin) $('customerMore').open = true;
   changed();
 }
 ['customerName', 'phone'].forEach(id => {
@@ -472,33 +538,36 @@ const statusLabel = { paid: 'Paid', partial: 'Part paid', due: 'Due', cancelled:
 function invoiceMatches(inv, q) {
   return !q || `${inv.invoiceNo} ${inv.customer.name} ${inv.customer.phone} ${inv.customer.gstin} ${inv.items.map(i => `${i.model} ${i.imei}`).join(' ')} ${inv.finance?.name || ''} ${inv.notes || ''}`.toLowerCase().includes(q);
 }
+// A bill in a list: tap it to open; Receive (when due), PDF and the ⋯ menu on the right.
 function billCard(inv) {
-  const t = calcInvoice(inv), st = paymentStatus(inv), items = inv.items;
+  const t = calcInvoice(inv), st = paymentStatus(inv), items = inv.items, due = t.balance > 0.004;
   const summary = items.length > 1 ? `${items[0].model} +${items.length - 1} more` : items[0]?.model;
   return `<div class="bill" data-id="${esc(inv.id)}">
-    <div class="bill-main"><strong>${esc(inv.customer.name)}</strong> <span class="badge ${st}">${statusLabel[st]}</span>${inv.finance ? ` <span class="badge finance">${esc(inv.finance.name)}</span>` : ''}
+    <span class="avatar${st === 'cancelled' ? ' slate' : due ? ' red' : ''}">${esc(initials(inv.customer.name || '?'))}</span>
+    <div class="bill-main"><strong>${esc(inv.customer.name)}</strong>${inv.finance ? ` <span class="badge finance">${esc(inv.finance.name)}</span>` : ''}
       <small>${esc(inv.invoiceNo)} · ${dateForDisplay(inv.date)}${inv.customer.phone ? ` · ${esc(inv.customer.phone)}` : ''}</small><small>${esc(summary)}</small></div>
-    <div class="bill-amt"><strong>${money(t.grandTotal)}</strong>${t.balance > 0.004 ? `<small class="due-text">Due ${money(t.balance)}</small>` : ''}</div>
+    <div class="bill-amt"><strong>${money(t.grandTotal)}</strong><br><span class="badge ${st}">${st === 'partial' ? `Due ${money(t.balance)}` : statusLabel[st]}</span></div>
     <div class="bill-actions">
-      <button type="button" class="secondary small" data-act="open">Open</button>
-      <button type="button" class="secondary small" data-act="pdf">PDF</button>
-      ${t.balance > 0.004 ? '<button type="button" class="small" data-act="pay">Receive</button>' : ''}
-      <button type="button" class="secondary small" data-act="more" aria-label="More actions">⋯</button>
+      ${due ? '<button type="button" class="small" data-act="pay">Receive</button>' : ''}
+      <button type="button" class="icon-btn hide-phone" data-act="pdf" title="PDF" aria-label="Download PDF">${icon('file', 18)}</button>
+      <button type="button" class="icon-btn" data-act="more" title="More" aria-label="More actions">${icon('dots', 18)}</button>
     </div></div>`;
 }
 function wireBillActions(container) {
-  container.querySelectorAll('.bill').forEach(el => el.addEventListener('click', async e => {
-    const btn = e.target.closest('[data-act]'); if (!btn) return;
+  container.querySelectorAll('.bill[data-id]').forEach(el => el.addEventListener('click', async e => {
     const inv = S().invoices.find(i => i.id === el.dataset.id); if (!inv) return;
-    const act = btn.dataset.act;
+    const act = e.target.closest('[data-act]')?.dataset.act || 'open';
     if (act === 'open') openInvoice(inv);
     if (act === 'pdf') downloadPdf(inv);
     if (act === 'pay') receivePayment(inv);
     if (act === 'more') {
       const r = await dialog(`<h3>${esc(inv.invoiceNo)}</h3><p>${esc(inv.customer.name)} · ${money(calcInvoice(inv).grandTotal)}</p><div class="menu">
-        <button class="secondary" data-result="wa">Send on WhatsApp</button><button class="secondary" data-result="dup">Copy as new bill</button>
+        <button class="secondary" data-result="open">${icon('receipt', 18)}Open bill</button><button class="secondary" data-result="pdf">${icon('file', 18)}Download PDF</button>
+        <button class="secondary" data-result="wa">${icon('chat', 18)}Send on WhatsApp</button><button class="secondary" data-result="dup">${icon('plus', 18)}Copy as new bill</button>
         ${inv.status === 'cancelled' ? '<button class="secondary" data-result="restore">Restore (un-cancel)</button>' : '<button class="danger" data-result="cancel">Cancel this bill</button>'}
         <button class="secondary" data-result="close">Close</button></div>`);
+      if (r === 'open') openInvoice(inv);
+      if (r === 'pdf') downloadPdf(inv);
       if (r === 'wa') shareWhatsApp(inv);
       if (r === 'dup') duplicateInvoice(inv);
       if (r === 'cancel' && await confirmBox('Cancel this bill?', `${inv.invoiceNo} will be marked cancelled and left out of sales and GST totals. The number stays used, as GST rules require.`, 'Cancel bill', true)) {
@@ -525,11 +594,13 @@ async function receivePayment(inv) {
 }
 function renderBills() {
   const q = $('billSearch').value.trim().toLowerCase(), from = $('billFrom').value, to = $('billTo').value, st = $('billStatus').value;
-  const list = myInvoices().filter(i => invoiceMatches(i, q) && (!from || i.date >= from) && (!to || i.date <= to) && (!st || (st === 'finance' ? Boolean(i.finance) : paymentStatus(i) === st)))
+  const statusOk = i => !st || (st === 'finance' ? Boolean(i.finance) : st === 'open' ? ['due', 'partial'].includes(paymentStatus(i)) : paymentStatus(i) === st);
+  const list = myInvoices().filter(i => invoiceMatches(i, q) && (!from || i.date >= from) && (!to || i.date <= to) && statusOk(i))
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const shown = list.slice(0, billLimit), active = list.filter(i => i.status !== 'cancelled');
-  $('billSummary').textContent = list.length ? `${list.length} bill${list.length === 1 ? '' : 's'} · Sales ${money(active.reduce((s, i) => s + calcInvoice(i).grandTotal, 0))} · Due ${money(active.reduce((s, i) => s + calcInvoice(i).balance, 0))}` : '';
-  if (!list.length) { $('billList').innerHTML = `<p class="empty">${myInvoices().length ? 'No bills match.' : 'No bills yet. Tap “+ New bill” to create your first one.'}</p>`; return; }
+  const due = active.reduce((s, i) => s + calcInvoice(i).balance, 0);
+  $('billSummary').innerHTML = list.length ? `<span><strong>${list.length}</strong> bill${list.length === 1 ? '' : 's'}</span><span>Sales <strong>${money(active.reduce((s, i) => s + calcInvoice(i).grandTotal, 0))}</strong></span>${due > 0.004 ? `<span class="due-text">To collect <strong>${money(due)}</strong></span>` : ''}` : '';
+  if (!list.length) { $('billList').innerHTML = `<p class="empty">${myInvoices().length ? 'No bills match.' : 'No bills yet. Tap “New sale” to make your first one.'}</p>`; return; }
   let html = '', lastDate = '';
   for (const inv of shown) { if (inv.date !== lastDate) { lastDate = inv.date; html += `<div class="day">${dateForDisplay(inv.date)}</div>`; } html += billCard(inv); }
   if (list.length > shown.length) html += `<button type="button" class="secondary more-btn" id="moreBills">Show more (${list.length - shown.length} left)</button>`;
@@ -538,24 +609,43 @@ function renderBills() {
 }
 let billLimit = 100;
 ['billSearch', 'billFrom', 'billTo', 'billStatus'].forEach(id => $(id).addEventListener('input', () => { billLimit = 100; renderBills(); }));
+function setBillFilter(status) {
+  $('billStatus').value = status;
+  document.querySelectorAll('#billChips [data-status]').forEach(c => c.classList.toggle('active', c.dataset.status === status));
+}
+$('billChips').addEventListener('click', e => { const c = e.target.closest('[data-status]'); if (!c) return; setBillFilter(c.dataset.status); billLimit = 100; renderBills(); });
 
 /* =========================================================================
    Customers
    ========================================================================= */
+const customerKeyOf = inv => (inv.customer?.phone || '').replace(/\s/g, '') || (inv.customer?.name || '').trim().toLowerCase();
 function renderCustomers() {
   const q = $('customerSearch').value.trim().toLowerCase(), duesOnly = $('customerDuesOnly').checked;
   const all = customerDirectory(), list = all.filter(c => (!q || `${c.name} ${c.phone}`.toLowerCase().includes(q)) && (!duesOnly || c.due > 0.004));
+  const due = all.reduce((s, c) => s + c.due, 0);
+  $('customerSummary').innerHTML = all.length ? `${all.length} customer${all.length === 1 ? '' : 's'}${due > 0.004 ? ` · <span class="due-text">to collect ${money(due)}</span>` : ''}` : 'Made automatically from your bills';
   if (!list.length) { $('customerList').innerHTML = `<p class="empty">${all.length ? 'No customers match.' : 'Customers appear here automatically once you save bills.'}</p>`; return; }
   $('customerList').innerHTML = list.slice(0, 300).map(c => `<div class="bill" data-key="${esc(c.key)}">
+    <span class="avatar${c.due > 0.004 ? ' red' : ''}">${esc(initials(c.name || '?'))}</span>
     <div class="bill-main"><strong>${esc(c.name) || 'Unnamed'}</strong><small>${esc(c.phone || 'No phone')} · ${c.count} bill${c.count === 1 ? '' : 's'} · last ${dateForDisplay(c.last)}</small></div>
-    <div class="bill-amt"><strong>${money(c.total)}</strong>${c.due > 0.004 ? `<small class="due-text">Due ${money(c.due)}</small>` : ''}</div>
-    <div class="bill-actions"><button type="button" class="secondary small" data-act="bills">Bills</button><button type="button" class="small" data-act="new">New bill</button>${c.phone ? '<button type="button" class="secondary small" data-act="wa">WhatsApp</button>' : ''}</div></div>`).join('');
-  $('customerList').querySelectorAll('.bill').forEach(el => el.addEventListener('click', e => {
-    const act = e.target.closest('[data-act]')?.dataset.act, c = list.find(x => x.key === el.dataset.key); if (!act || !c) return;
-    if (act === 'bills') { $('billSearch').value = c.phone || c.name; $('billStatus').value = ''; $('billFrom').value = ''; $('billTo').value = ''; show('bills'); }
-    if (act === 'new') { newInvoice(); pickCustomer(c); show('billing'); }
-    if (act === 'wa') window.open(waLink(c.phone, c.due > 0.004 ? `Dear ${c.name}, a balance of ₹${format(c.due)} is pending at ${P().businessName}. Thank you.` : `Dear ${c.name}, `), '_blank');
-  }));
+    <div class="bill-amt">${c.due > 0.004 ? `<strong class="due-text">${money(c.due)}</strong><small>to collect</small>` : `<strong>${money(c.total)}</strong><small>total sales</small>`}</div>
+    <span class="chev hide-phone">${icon('chevron', 18)}</span></div>`).join('');
+  $('customerList').querySelectorAll('.bill').forEach(el => el.addEventListener('click', () => { const c = list.find(x => x.key === el.dataset.key); if (c) customerDetail(c); }));
+}
+// One customer: totals, recent bills, and New bill / WhatsApp / Call.
+async function customerDetail(c) {
+  const bills = myInvoices().filter(i => customerKeyOf(i) === c.key).sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const phone = String(c.phone || '').replace(/[^0-9+]/g, '');
+  const r = await dialog(`<div class="cust-head"><span class="avatar${c.due > 0.004 ? ' red' : ''}">${esc(initials(c.name || '?'))}</span><div><h3>${esc(c.name) || 'Unnamed'}</h3><small>${esc(c.phone || 'No phone')}${c.customer?.address ? ` · ${esc(c.customer.address)}` : ''}</small></div></div>
+    <div class="cust-stats"><div><small>Bills</small><strong>${c.count}</strong></div><div><small>Total sales</small><strong>${money(c.total)}</strong></div><div><small>To collect</small><strong class="${c.due > 0.004 ? 'due-text' : ''}">${money(c.due)}</strong></div></div>
+    <div class="cust-bills">${bills.slice(0, 6).map(i => { const t = calcInvoice(i), st = paymentStatus(i); return `<button type="button" class="cust-bill" data-result="open:${esc(i.id)}"><span>${esc(i.invoiceNo)}<small>${dateForDisplay(i.date)} · ${esc(i.items[0]?.model || '')}${i.items.length > 1 ? ` +${i.items.length - 1}` : ''}</small></span><span class="r"><strong>${money(t.grandTotal)}</strong><span class="badge ${st}">${statusLabel[st]}</span></span></button>`; }).join('')}</div>
+    ${bills.length > 6 ? `<button type="button" class="link" data-result="bills">See all ${bills.length} bills</button>` : ''}
+    <div class="actions cust-actions">${phone ? `<a class="button" href="tel:${esc(phone)}">${icon('phone', 18)}Call</a><button class="secondary" data-result="wa">${icon('chat', 18)}WhatsApp</button>` : ''}<span class="spacer"></span><button class="secondary" data-result="close">Close</button><button data-result="new">${icon('plus', 18)}New bill</button></div>`);
+  if (!r) return;
+  if (r === 'new') { newInvoice(); pickCustomer(c); show('billing'); }
+  if (r === 'bills') { $('billSearch').value = c.phone || c.name; setBillFilter(''); $('billFrom').value = ''; $('billTo').value = ''; show('bills'); }
+  if (r === 'wa') window.open(waLink(c.phone, c.due > 0.004 ? `Dear ${c.name}, a balance of ₹${format(c.due)} is pending at ${P().businessName}. Thank you.` : `Dear ${c.name}, `), '_blank');
+  if (r.startsWith('open:')) { const inv = S().invoices.find(i => i.id === r.slice(5)); if (inv) openInvoice(inv); }
 }
 ['customerSearch', 'customerDuesOnly'].forEach(id => $(id).addEventListener('input', renderCustomers));
 
@@ -567,24 +657,39 @@ function renderProducts() {
   const q = $('productSearch').value.trim();
   const all = myProducts(), list = q ? findProducts(q, { dealerCode: true }) : [...all].sort((a, b) => a.name.localeCompare(b.name));
   const missing = all.filter(p => !p.itemNo).length;
-  $('numberAll').hidden = !missing; $('numberAll').textContent = `Give item numbers to ${missing} product${missing === 1 ? '' : 's'}`;
+  $('numberAll').hidden = !missing; $('numberAll').textContent = `Give item numbers to ${missing} item${missing === 1 ? '' : 's'}`;
+  const tracked = all.filter(p => p.stock != null), out = tracked.filter(p => p.stock <= 0).length;
+  $('productSummary').innerHTML = all.length ? `${all.length} item${all.length === 1 ? '' : 's'}${tracked.length ? ` · ${tracked.reduce((s, p) => s + Math.max(0, p.stock), 0)} in stock` : ''}${out ? ` · <span class="due-text">${out} out of stock</span>` : ''}` : 'Phones and accessories you sell';
   $('printLabels').disabled = !all.length;
   if (!editingProduct) { $('pItemNo').placeholder = `Auto: ${nextItemNo(S().products, activeProfile())}`; productBarcodePreview(); }
-  if (!list.length) { $('productList').innerHTML = `<p class="empty">${all.length ? 'No products match.' : `Add the phones and accessories you sell, so bills fill in ${P().gst ? 'HSN, GST and ' : ''}price automatically.`}</p>`; return; }
-  $('productList').innerHTML = `<div class="table-scroll"><table class="data-table"><thead><tr><th>Item no.</th><th>Name</th><th class="second-only">Code</th><th class="gst-only">HSN</th><th class="gst-only">GST</th><th class="num">Price</th><th class="num">Stock</th><th></th></tr></thead><tbody>${list.map(p => `<tr data-id="${esc(p.id)}"><td class="item-no">${p.itemNo ? esc(p.itemNo) : '—'}</td><td>${esc(p.name)}</td><td class="second-only">${p.code ? `<span class="code-pill">${esc(p.code)}</span>` : '—'}</td><td class="gst-only">${esc(p.hsn)}</td><td class="gst-only">${p.taxRate}%</td><td class="num">${format(p.price)}</td><td class="num ${p.stock != null && p.stock <= 0 ? 'due-text' : ''}">${p.stock ?? '—'}</td><td class="row-actions"><button type="button" class="secondary small" data-act="edit">Edit</button><button type="button" class="secondary small" data-act="label">Label</button><button type="button" class="secondary small" data-act="del">Delete</button></td></tr>`).join('')}</tbody></table></div>`;
-  $('productList').querySelectorAll('tr[data-id]').forEach(tr => tr.addEventListener('click', async e => {
-    const act = e.target.closest('[data-act]')?.dataset.act, p = S().products.find(x => x.id === tr.dataset.id); if (!act || !p) return;
-    if (act === 'edit') editProduct(p);
-    if (act === 'label') printLabels([p]);
-    if (act === 'del' && await confirmBox('Delete product?', `${p.name} will be removed from your product list. Old bills are not affected.`, 'Delete', true)) { await store.deleteProduct(p.id); toast('Product deleted.'); }
+  if (!list.length) { $('productList').innerHTML = `<p class="empty">${all.length ? 'No items match.' : `Add the phones and accessories you sell, so bills fill in ${P().gst ? 'HSN, GST and ' : ''}price automatically.`}</p>`; return; }
+  // Tap an item to edit it; the tag button prints its barcode label.
+  $('productList').innerHTML = list.map(p => `<div class="bill" data-id="${esc(p.id)}">
+    <span class="avatar slate">${icon('box', 20)}</span>
+    <div class="bill-main"><strong>${esc(p.name)}</strong>${p.code ? ` <span class="code-pill">${esc(p.code)}</span>` : ''}<small>${[p.itemNo ? `<span class="item-no">#${esc(p.itemNo)}</span>` : 'No item no.', P().gst ? `HSN ${esc(p.hsn)} · GST ${p.taxRate}%` : ''].filter(Boolean).join(' · ')}</small></div>
+    <div class="bill-amt"><strong>${money(p.price)}</strong>${p.stock != null ? `<br><span class="badge stock${p.stock <= 0 ? ' low' : ''}">${p.stock <= 0 ? 'Out of stock' : `Stock ${p.stock}`}</span>` : ''}</div>
+    <div class="bill-actions"><button type="button" class="icon-btn" data-act="label" title="Print barcode label" aria-label="Print barcode label">${icon('tag', 18)}</button></div></div>`).join('');
+  $('productList').querySelectorAll('.bill[data-id]').forEach(el => el.addEventListener('click', e => {
+    const p = S().products.find(x => x.id === el.dataset.id); if (!p) return;
+    if (e.target.closest('[data-act="label"]')) printLabels([p]); else editProduct(p);
   }));
 }
+function openProductDialog() { resetProductForm(); if (!$('productDialog').open) $('productDialog').showModal(); $('pName').focus(); }
+$('addProduct').onclick = openProductDialog;
+$('pClose').onclick = $('pCancel').onclick = () => $('productDialog').close();
+$('productDialog').addEventListener('close', () => resetProductForm());
+$('pDelete').onclick = async () => {
+  const p = editingProduct; if (!p) return;
+  if (!await confirmBox('Delete item?', `${p.name} will be removed from your items. Old bills are not affected.`, 'Delete', true)) return;
+  await store.deleteProduct(p.id); $('productDialog').close(); toast(`${p.name} deleted.`);
+};
 function editProduct(p) {
   editingProduct = p;
   $('pName').value = p.name; $('pItemNo').value = p.itemNo || ''; $('pItemNo').placeholder = p.itemNo ? '' : `Auto: ${nextItemNo(S().products, profileOf(p))}`;
   $('pCode').value = p.code || ''; $('pHsn').value = p.hsn; $('pPrice').value = p.price || ''; $('pTax').value = String(p.taxRate); $('pStock').value = p.stock ?? '';
-  $('productFormTitle').textContent = 'Edit product'; $('pCancel').hidden = false; productBarcodePreview();
-  $('productForm').scrollIntoView({ block: 'start' }); $('pName').focus();
+  $('productFormTitle').textContent = 'Edit item'; $('pDelete').hidden = false; $('productStatus').textContent = ''; productBarcodePreview();
+  if (!$('productDialog').open) $('productDialog').showModal();
+  $('pName').focus();
 }
 function productBarcodePreview() {
   const value = $('pItemNo').value.trim() || $('pItemNo').placeholder.replace(/^Auto: /, '');
@@ -592,7 +697,7 @@ function productBarcodePreview() {
   $('pBarcode').innerHTML = svg ? `${svg}<strong>${esc(value)}</strong>` : 'Barcode preview: letters, numbers and symbols only, no spaces.';
 }
 function resetProductForm() {
-  editingProduct = null; $('productForm').reset(); $('pTax').value = '18'; $('productFormTitle').textContent = 'Add product'; $('pCancel').hidden = true;
+  editingProduct = null; $('productForm').reset(); $('pTax').value = '18'; $('productFormTitle').textContent = 'Add item'; $('pDelete').hidden = true; $('productStatus').textContent = '';
   $('pItemNo').placeholder = `Auto: ${nextItemNo(S().products, activeProfile())}`; productBarcodePreview();
 }
 $('pItemNo').addEventListener('input', productBarcodePreview);
@@ -604,13 +709,12 @@ $('productForm').addEventListener('submit', async e => {
   if (typedNo && !cleanItemNo(typedNo)) { $('productStatus').textContent = 'The item number can only have letters, numbers and symbols, without spaces.'; return; }
   const itemNo = typedNo || editingProduct?.itemNo || nextItemNo(S().products, profile);
   const p = cleanProduct({ id: editingProduct?.id, profile, itemNo, code: profile === 'second' ? $('pCode').value : '', name: $('pName').value, hsn: $('pHsn').value, price: $('pPrice').value, taxRate: P().gst ? $('pTax').value : 0, stock: $('pStock').value === '' ? null : $('pStock').value });
-  if (!p) { $('productStatus').textContent = 'Enter a product name.'; return; }
-  if (!editingProduct && myProducts().some(x => x.name.toLowerCase() === p.name.toLowerCase())) { $('productStatus').textContent = 'A product with this name already exists.'; return; }
+  if (!p) { $('productStatus').textContent = 'Enter the item name.'; return; }
+  if (!editingProduct && myProducts().some(x => x.name.toLowerCase() === p.name.toLowerCase())) { $('productStatus').textContent = 'An item with this name already exists.'; return; }
   const clash = S().products.find(x => profileOf(x) === profile && x.id !== p.id && x.itemNo && x.itemNo.toLowerCase() === p.itemNo.toLowerCase());
   if (clash) { $('productStatus').textContent = `Item number ${p.itemNo} is already used for ${clash.name}. Each item number can be used only once.`; return; }
-  await store.saveProduct(p); $('productStatus').textContent = `Saved ${p.name} (item no. ${p.itemNo}).`; resetProductForm();
+  await store.saveProduct(p); $('productDialog').close(); toast(`Saved ${p.name} (item no. ${p.itemNo}).`);
 });
-$('pCancel').onclick = resetProductForm;
 $('productSearch').addEventListener('input', renderProducts);
 // Scanning into the search box: an exact item number opens that product for editing (e.g. to update stock).
 $('productSearch').addEventListener('keydown', e => {
@@ -686,19 +790,23 @@ function summarise(invoices) {
   }
   return r;
 }
-const card = (label, value, sub = '', cls = '') => `<div class="card ${cls}"><small>${label}</small><strong>${value}</strong>${sub ? `<span>${sub}</span>` : ''}</div>`;
+// A figure card: label, value, small line under it, colour (tone-green, tone-blue, warn…), icon, extra attributes.
+const card = (label, value, sub = '', cls = '', ic = 'rupee', attrs = '') => `<div class="card ${cls}" ${attrs}><span class="card-ic">${icon(ic, 20)}</span><div class="card-body"><small>${label}</small><strong>${value}</strong>${sub ? `<span class="sub">${sub}</span>` : ''}</div></div>`;
 function renderDashboard() {
   const inv = myInvoices(), t = today(), ms = monthStart();
   const day = summarise(inv.filter(i => i.date === t)), month = summarise(inv.filter(i => i.date >= ms && i.date <= t)), all = summarise(inv);
-  $('dashCards').innerHTML = card('Today', money(day.sales), `${day.count} bill${day.count === 1 ? '' : 's'}`) + card('This month', money(month.sales), `${month.count} bills`)
-    + (P().gst ? card('GST this month', money(month.cgst + month.sgst + month.igst), `Taxable ${money(month.net)}`) : card('Received this month', money(month.received), `Discounts ${money(month.discount)}`)) + card('Payments due', money(all.due), 'all time', all.due > 0.004 ? 'warn' : '');
+  $('todayLabel').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  $('dashCards').innerHTML = card("Today's sale", money(day.sales), `${day.count} bill${day.count === 1 ? '' : 's'}`, 'tone-green', 'trend') + card('This month', money(month.sales), `${month.count} bill${month.count === 1 ? '' : 's'}`, '', 'calendar')
+    + (P().gst ? card('GST this month', money(month.cgst + month.sgst + month.igst), `Taxable ${money(month.net)}`, 'tone-blue', 'percent') : card('Received this month', money(month.received), `Discounts ${money(month.discount)}`, 'tone-blue', 'wallet'))
+    + card('To collect', money(all.due), all.due > 0.004 ? 'Tap to see who owes' : 'Nothing pending', all.due > 0.004 ? 'warn clickable' : 'tone-green', 'clock', all.due > 0.004 ? 'data-quick="collect"' : '');
   const days = [...Array(7)].map((_, k) => { const d = new Date(); d.setDate(d.getDate() - (6 - k)); const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; return { key, label: d.toLocaleDateString('en-IN', { weekday: 'short' }), v: summarise(inv.filter(i => i.date === key)).sales }; });
   const max = Math.max(1, ...days.map(d => d.v));
   $('dashChart').innerHTML = days.map(d => `<div class="bar" title="${dateForDisplay(d.key)}: ${money(d.v)}"><span class="bar-val">${d.v ? `₹${Math.round(d.v).toLocaleString('en-IN')}` : ''}</span><span class="bar-fill" style="height:${Math.max(2, d.v / max * 100)}%"></span><small>${d.label}</small></div>`).join('');
   const dues = customerDirectory().filter(c => c.due > 0.004).sort((a, b) => b.due - a.due).slice(0, 5);
-  $('dashDues').innerHTML = dues.length ? dues.map(c => `<div class="line"><span>${esc(c.name)}<small>${esc(c.phone || '')}</small></span><strong class="due-text">${money(c.due)}</strong></div>`).join('') : '<p class="empty">No pending payments. 🎉</p>';
+  $('dashDues').innerHTML = dues.length ? dues.map(c => `<div class="line clickable" data-key="${esc(c.key)}"><span>${esc(c.name)}<small>${esc(c.phone || '')}</small></span><strong class="due-text">${money(c.due)}</strong></div>`).join('') : '<p class="empty">No pending payments.</p>';
+  $('dashDues').querySelectorAll('[data-key]').forEach(el => el.addEventListener('click', () => { const c = dues.find(x => x.key === el.dataset.key); if (c) customerDetail(c); }));
   const recent = [...inv].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 6);
-  $('dashRecent').innerHTML = recent.length ? recent.map(billCard).join('') : '<p class="empty">No bills yet.</p>';
+  $('dashRecent').innerHTML = recent.length ? recent.map(billCard).join('') : '<p class="empty">No bills yet. Tap “New sale” to make your first bill.</p>';
   wireBillActions($('dashRecent'));
 }
 function setRange(kind) {
@@ -707,18 +815,27 @@ function setRange(kind) {
   if (kind === 'month') { $('repFrom').value = monthStart(d); $('repTo').value = t; }
   if (kind === 'lastmonth') { const s = new Date(d.getFullYear(), d.getMonth() - 1, 1), e = new Date(d.getFullYear(), d.getMonth(), 0); $('repFrom').value = monthStart(s); $('repTo').value = `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')}`; }
   if (kind === 'fy') { const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; $('repFrom').value = `${y}-04-01`; $('repTo').value = `${y + 1}-03-31`; }
+  document.querySelectorAll('[data-range]').forEach(b => b.classList.toggle('active', b.dataset.range === kind));
   renderReports();
 }
 document.querySelectorAll('[data-range]').forEach(b => b.addEventListener('click', () => setRange(b.dataset.range)));
-['repFrom', 'repTo'].forEach(id => $(id).addEventListener('input', renderReports));
+['repFrom', 'repTo'].forEach(id => $(id).addEventListener('input', () => { document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active')); renderReports(); }));
+let reportTab = 'pay';
+function setReportTab(tab) {
+  reportTab = tab;
+  $('reportTabs').querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  document.querySelectorAll('[data-tab-panel]').forEach(p => { p.hidden = p.dataset.tabPanel !== tab; });
+}
+$('reportTabs').addEventListener('click', e => { const tab = e.target.closest('[data-tab]')?.dataset.tab; if (tab) setReportTab(tab); });
 function reportInvoices() { const f = $('repFrom').value, t = $('repTo').value; return myInvoices().filter(i => (!f || i.date >= f) && (!t || i.date <= t)); }
 function renderReports() {
-  if (!$('repFrom').value && !$('repTo').value) { $('repFrom').value = monthStart(); $('repTo').value = today(); }
+  if (!$('repFrom').value && !$('repTo').value) { setRange('month'); return; }
+  if (!P().gst && reportTab === 'gst') setReportTab('pay');
   const r = summarise(reportInvoices());
-  const bills = `${r.count} bills${r.cancelled ? ` · ${r.cancelled} cancelled` : ''}`;
-  $('repCards').innerHTML = (P().gst ? card('Sales (incl. GST)', money(r.sales), bills) + card('Taxable value', money(r.net)) + card('CGST + SGST', money(r.cgst + r.sgst), `${money(r.cgst)} each`) + card('IGST', money(r.igst)) : card('Sales', money(r.sales), bills))
-    + card('Received', money(r.received), r.financed ? `incl. ${money(r.financed)} from finance` : '') + card('Due', money(r.due), '', r.due > 0.004 ? 'warn' : '') + (P().gst ? card('B2B bills', String(r.b2b), 'with customer GSTIN') : '') + card('Discounts given', money(r.discount))
-    + (r.financeCount ? card('Finance (EMI) sales', money(r.financed), `${r.financeCount} bill${r.financeCount === 1 ? '' : 's'}`) : '');
+  const bills = `${r.count} bill${r.count === 1 ? '' : 's'}${r.cancelled ? ` · ${r.cancelled} cancelled` : ''}`;
+  $('repCards').innerHTML = (P().gst ? card('Sales (incl. GST)', money(r.sales), bills, 'tone-green', 'trend') + card('Taxable value', money(r.net), '', '', 'receipt') + card('CGST + SGST', money(r.cgst + r.sgst), `${money(r.cgst)} each`, 'tone-blue', 'percent') + card('IGST', money(r.igst), 'Other-state sales', 'tone-blue', 'percent') : card('Sales', money(r.sales), bills, 'tone-green', 'trend'))
+    + card('Received', money(r.received), r.financed ? `incl. ${money(r.financed)} from finance` : '', 'tone-green', 'wallet') + card('To collect', money(r.due), '', r.due > 0.004 ? 'warn' : '', 'clock') + (P().gst ? card('B2B bills', String(r.b2b), 'with customer GSTIN', 'tone-violet', 'building') : '') + card('Discounts given', money(r.discount), '', 'tone-amber', 'tag')
+    + (r.financeCount ? card('Finance (EMI) sales', money(r.financed), `${r.financeCount} bill${r.financeCount === 1 ? '' : 's'}`, 'tone-violet', 'card') : '');
   const fin = Object.entries(r.finance).sort((a, b) => b[1].amount - a[1].amount);
   $('repFinance').innerHTML = fin.length ? fin.map(([name, f]) => `<div class="line"><span>${esc(name)}<small>${f.count} bill${f.count === 1 ? '' : 's'} · bill total ${money(f.sales)}</small></span><strong>${money(f.amount)}</strong></div>`).join('') : '<p class="empty">No financed bills in this period.</p>';
   const rates = Object.entries(r.rates).sort((a, b) => a[0] - b[0]);
@@ -789,6 +906,20 @@ $('secondShopForm').addEventListener('submit', async e => {
   $('s2Status').textContent = !second.enabled ? 'Second shop switched off. Its bills are kept, and come back if you switch it on again.'
     : `Saved ${store.where}.${wasEnabled ? '' : ' Tap the shop name at the top left to switch between your shops.'}`;
 });
+
+/* ---------- settings pages: a menu on the left (computer) or the Menu screen (phone) opens one page at a time ---------- */
+const SETTINGS_TITLES = { business: 'Business & invoice', finance: 'Finance companies', sync: 'Sign-in, sync & staff', second: 'Second shop', signature: 'Signature', backup: 'Backup & restore', app: 'App version' };
+let settingsSection = 'business';
+function showSettings(section) { if (SETTINGS_TITLES[section]) settingsSection = section; show('settings'); }
+function renderSettings() {
+  document.querySelectorAll('.settings-page').forEach(p => { p.hidden = p.dataset.section !== settingsSection; });
+  document.querySelectorAll('#settingsMenu [data-section]').forEach(b => b.classList.toggle('active', b.dataset.section === settingsSection));
+  $('settingsTitle').textContent = isPhone() ? SETTINGS_TITLES[settingsSection] : 'Settings';
+  if (settingsSection === 'sync') renderCloudPanel();
+  if (settingsSection === 'app') renderAppPanel();
+}
+$('settingsMenu').addEventListener('click', e => { const section = e.target.closest('[data-section]')?.dataset.section; if (section) { settingsSection = section; renderSettings(); } });
+$('settingsBack').onclick = () => show('menu');
 
 /* ---------- finance companies (EMI) ---------- */
 let financeDirty = false; // edited in Settings but not saved yet: don't overwrite with synced changes
@@ -866,7 +997,7 @@ $('restoreFile').addEventListener('change', async () => {
    ========================================================================= */
 const syncText = { local: 'On this device', connecting: 'Connecting…', synced: 'Synced', syncing: 'Syncing…', offline: 'Offline — will sync', error: 'Sync problem' };
 function setSync(state) { syncState = state; $('syncChip').dataset.state = state; $('syncChip').textContent = syncText[state] || state; if (currentView === 'settings') renderCloudPanel(); }
-$('syncChip').onclick = () => show('settings');
+$('syncChip').onclick = () => showSettings('sync');
 window.addEventListener('online', () => { if (store === cloudStore && syncState === 'offline') setSync('syncing'); });
 window.addEventListener('offline', () => { if (store === cloudStore) setSync('offline'); });
 
@@ -875,10 +1006,10 @@ function updateAccountUI() {
   $('signInBtn').hidden = !cloud || signedIn; $('accountBtn').hidden = !signedIn;
   if (signedIn) { $('accountName').textContent = (user.displayName || user.email || '').split(' ')[0]; $('accountPhoto').src = user.photoURL || ''; $('accountPhoto').hidden = !user.photoURL; }
 }
-$('accountBtn').onclick = () => show('settings');
+$('accountBtn').onclick = () => showSettings('sync');
 $('signInBtn').onclick = signIn;
 async function signIn() {
-  if (!cloud) { show('settings'); return; }
+  if (!cloud) { showSettings('sync'); return; }
   try { setSync('connecting'); await cloud.signIn(); }
   catch (error) { setSync(store === cloudStore ? 'synced' : 'local'); toast(friendlyError(error), 'error'); }
 }
@@ -985,7 +1116,7 @@ function renderCloudPanel() {
 let pendingUpdate = null;
 const UPDATE_CHECK_KEY = 'mm-update-checked', UPDATE_LATER_KEY = 'mm-update-later';
 function renderAppPanel() {
-  $('appVersion').textContent = APP_VERSION;
+  $('appVersion').textContent = APP_VERSION; $('menuVersion').textContent = pendingUpdate ? `Version ${APP_VERSION} · update ${pendingUpdate.version} ready` : `Version ${APP_VERSION}`;
   if (isNativeApp()) {
     $('appActions').innerHTML = pendingUpdate ? `<button type="button" id="updateNow">Update to ${esc(pendingUpdate.version)}</button>` : '<button type="button" class="secondary" id="checkUpdate">Check for updates</button>';
     $('appHint').textContent = 'The app checks for a new version each time it opens, and offers to download and install it.';
