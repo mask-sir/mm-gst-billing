@@ -1,5 +1,10 @@
 apply plugin: 'com.android.application'
 
+// Release signing: the GitHub release build passes the keystore through these environment variables
+// (see .github/workflows/release-apk.yml). The key must be the same one that signed the app already on the
+// phones, or Android refuses to install the update over it.
+def releaseKeystore = System.getenv('MM_KEYSTORE_FILE')
+
 android {
     namespace "com.mmmobiles.gst"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +12,8 @@ android {
         applicationId "com.mmmobiles.gst"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20100
-        versionName "2.1.0"
+        versionCode 20200
+        versionName "2.2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +21,19 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (releaseKeystore) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv('MM_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('MM_KEY_ALIAS')
+                keyPassword System.getenv('MM_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
+            if (releaseKeystore) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

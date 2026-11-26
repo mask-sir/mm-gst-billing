@@ -92,6 +92,7 @@ button{cursor:pointer;padding:9px 14px;min-height:38px;border:1px solid var(--ac
 button:hover:not(:disabled){filter:brightness(.97)}
 button:disabled{opacity:.5;cursor:default}
 button.secondary{color:#344054;background:#fff;border-color:var(--input)}
+a.button{display:inline-flex;align-items:center;padding:9px 14px;min-height:38px;border:1px solid var(--input);border-radius:8px;background:#fff;color:#344054;font-weight:600;font-size:13px;text-decoration:none}
 button.danger{background:#fff;color:var(--danger);border-color:#fecdca}
 button.small{padding:6px 10px;min-height:32px;font-size:12px}
 
@@ -187,6 +188,25 @@ dialog::backdrop{background:#10182866}
 .summary tr.due td{font-weight:700;color:#b42318}
 .words{margin:6px 0 10px 2px;font-size:12.5px;font-weight:600;font-style:italic}
 .small-note{margin:4px 2px;font-size:11px}
+.narration{margin:8px 0 4px;padding:7px 9px;border:1px solid #000;border-radius:3px;font-size:11px;white-space:pre-line;page-break-inside:avoid}
+.narration strong{display:block;margin-bottom:2px}
+/* Finance + narration on the bill form */
+.narration-field{display:grid;gap:5px}
+.narration-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.narration-head label{display:inline;font-size:12px}
+.narration-head .req{flex:1}
+.badge.finance{background:#eef4ff;color:#3538cd}
+.finance-list{display:grid;gap:12px}
+.finance-item{border:1px solid var(--border);border-radius:10px;padding:12px;display:grid;gap:10px}
+.finance-item .form-grid{grid-template-columns:2fr 1fr}
+.finance-item textarea{font-size:13px}
+.finance-item .row-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+/* App update banner (Android app) */
+.update-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;background:#eef4ff;border:1px solid #c7d7fe;border-radius:10px;font-size:13.5px}
+.update-banner .spacer{flex:1}
+.update-notes{max-height:40vh;overflow:auto;white-space:pre-line;font-size:13px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0}
+.progress{height:8px;background:#e4e8ee;border-radius:99px;overflow:hidden;margin:10px 0 4px}
+.progress span{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 .foot{display:flex;justify-content:space-between;gap:30px;margin-top:14px;padding-top:10px;border-top:1px solid #000;font-size:10px}
 .signature{min-width:180px;font-size:12px;text-align:center;flex-shrink:0;font-weight:700}
 .signature div{margin-top:40px;font-weight:400}

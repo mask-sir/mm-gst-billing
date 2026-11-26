@@ -1,13 +1,15 @@
 import {
   $, esc, format, money, dateForDisplay, today, numberToWords, calcInvoice, paymentStatus, validateInvoice, cleanText, cleanProduct,
   cleanSettings, migrateInvoice, financialYear, formatInvoiceNo, nextCounter, GST_RATES, PAYMENT_MODES, ITEM_DEFAULTS, BUSINESS_DEFAULTS, csvCell, uid,
-  profileOf, profileSettings, cleanItemNo, nextItemNo
+  profileOf, profileSettings, cleanItemNo, nextItemNo, FINANCE_TEMPLATE, NARRATION_MAX, financeNarration, financeValues, swapFigures, paymentLabel, ordinal, cleanFinances, MAX_FINANCES
 } from './util.js';
 import { barcodeSvg, isBarcodeText } from './barcode.js';
 import { LocalStore } from './store-local.js';
 import { Cloud, CloudStore, MAX_DEVICES, MAX_STAFF, friendlyError } from './cloud.js';
 import { makeInvoicePdf, makeLabelsPdf, saveFile, invoiceFilename } from './pdf.js';
 import { signatureFromFile, signatureForPdf } from './signature.js';
+import { APP_VERSION } from './version.js';
+import { findUpdate, downloadAndInstall, openInstaller, removeDownloadedApk, plainNotes, isNativeApp, RELEASES_PAGE } from './update.js';
 
 /* =========================================================================
    Storage: `store` is either the local store (signed out) or the cloud store (signed in).
@@ -74,7 +76,7 @@ $('shopMenu').addEventListener('click', async e => {
 
 function onData(kind) {
   if (kind === 'settings' || kind === 'all') {
-    applyProfileUI(); fillSettingsForm();
+    applyProfileUI(); fillSettingsForm(); renderFinanceOptions();
     if (editing && profileOf(editing) !== activeProfile()) newInvoice(); // second shop was switched off while one of its bills was open
     renderPreview(); if (!editing) refreshInvoiceNo();
   }
@@ -151,6 +153,64 @@ function readItems(noGst = false) {
     price: Number(r.querySelector('.it-price').value) || 0, discount: Number(r.querySelector('.it-disc').value) || 0, taxRate: noGst ? 0 : Number(r.querySelector('.it-tax').value)
   })).filter((it, i, all) => it.model || it.price || all.length === 1);
 }
+/* ---------- Finance (EMI): the finance company pays `finance.amount`, the customer pays the down payment ---------- */
+let financeTouched = false; // has the user typed a finance amount by hand?
+let autoNarration = '';     // the end part of the narration that was filled in from a finance template
+let narrationFigures = null; // the bill's figures (EMI date, amounts) when the narration was last brought up to date
+$('emiDay').innerHTML = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of every month</option>`).join('');
+const financeList = () => S().settings?.finances || [];
+function renderFinanceOptions(selected = $('financeCo').value, savedName = $('financeCo').selectedOptions?.[0]?.textContent || '') {
+  const list = financeList(), extra = selected && !list.some(f => f.id === selected) ? [{ id: selected, name: savedName || selected }] : [];
+  $('financeCo').innerHTML = `<option value="">No finance (paid by customer)</option>${[...list, ...extra].map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('')}`;
+  $('financeCo').value = selected || '';
+}
+function financeFromForm() {
+  const id = $('financeCo').value; if (!id) return null;
+  // A saved bill keeps the company name it was made with, even if the company is renamed later in Settings.
+  const name = editing?.finance && (editing.finance.id || 'saved') === id ? editing.finance.name : financeList().find(f => f.id === id)?.name || $('financeCo').selectedOptions[0]?.textContent || '';
+  return { id: editing?.finance && id === 'saved' ? editing.finance.id : id, name, emiDay: Number($('emiDay').value) || 3 };
+}
+function toggleFinance() {
+  const on = Boolean($('financeCo').value);
+  document.querySelectorAll('.fin-only').forEach(el => { el.hidden = !on; });
+  $('modeLabel').textContent = on ? 'Down payment mode' : 'Mode';
+  $('receivedLabel').textContent = on ? 'Down payment' : 'Amount received';
+  $('receivedFull').hidden = on;
+}
+const narrationTemplate = () => financeList().find(f => f.id === $('financeCo').value)?.template ?? FINANCE_TEMPLATE;
+// Keeps the narration's template part up to date with the bill (amounts, EMI date, company) until the user edits that part.
+// `force` puts the template in even when it isn't there yet (a company was just chosen).
+function syncNarration(inv, { force = false } = {}) {
+  const el = $('notes'), current = el.value, wanted = inv.finance ? financeNarration(narrationTemplate(), inv) : '';
+  const figures = inv.finance ? financeValues(inv) : null;
+  let next = current;
+  if (autoNarration && current.endsWith(autoNarration)) {
+    const before = current.slice(0, current.length - autoNarration.length);
+    next = wanted ? before + wanted : before.replace(/\s+$/, '');
+    autoNarration = wanted;
+  } else if (force && wanted) {
+    next = current.trim() ? `${current.replace(/\s+$/, '')}\n${wanted}` : wanted;
+    autoNarration = wanted;
+  } else if (figures && narrationFigures) next = swapFigures(current, narrationFigures, figures); // edited by hand: only swap changed figures
+  narrationFigures = figures;
+  if (next !== current) el.value = next.slice(0, NARRATION_MAX);
+}
+function onFinanceChange() {
+  const f = financeList().find(x => x.id === $('financeCo').value);
+  if (f) $('emiDay').value = String(f.emiDay);
+  financeTouched = false;
+  if (!$('financeCo').value) receivedTouched = false;
+  toggleFinance();
+  const inv = readForm(); syncNarration(inv, { force: Boolean(inv.finance) });
+}
+async function fillNarrationFromTemplate() {
+  const inv = readForm(); if (!inv.finance) return;
+  const wanted = financeNarration(narrationTemplate(), inv), current = $('notes').value.trim();
+  if (current && current !== autoNarration && current !== wanted && !(await confirmBox('Replace the narration?', `The narration will be replaced with the ${inv.finance.name} template. What is written there now will be removed.`, 'Replace'))) return;
+  $('notes').value = wanted.slice(0, NARRATION_MAX); autoNarration = wanted; narrationFigures = financeValues(inv); changed();
+}
+$('narrationFill').onclick = fillNarrationFromTemplate;
+
 function readForm() {
   const profile = formProfile(), s = profileSettings(S().settings, profile), noGst = !s.gst, base = editing || {};
   const business = editing ? Object.fromEntries(Object.keys(BUSINESS_DEFAULTS).map(k => [k, editing[k] ?? s[k]])) : Object.fromEntries(Object.keys(BUSINESS_DEFAULTS).map(k => [k, s[k]]));
@@ -163,9 +223,20 @@ function readForm() {
       gstin: noGst ? '' : cleanText($('customerGstin').value, 15).toUpperCase(), state: supplyType === 'inter' ? cleanText($('customerState').value, 50).toUpperCase() : '', stateCode: supplyType === 'inter' ? cleanText($('customerStateCode').value, 5) : ''
     },
     items: readItems(noGst), supplyType, ...business, roundUp: editing ? Boolean(editing.roundUp) : s.roundUp,
-    payment: { mode: $('paymentMode').value, received: 0, reference: cleanText($('paymentRef').value, 60), history: base.payment?.history || [] }, notes: cleanText($('notes').value, 500)
+    payment: { mode: $('paymentMode').value, received: 0, reference: cleanText($('paymentRef').value, 60), history: base.payment?.history || [] }, notes: cleanText($('notes').value, NARRATION_MAX),
+    finance: null
   };
-  const t = calcInvoice({ ...inv, payment: { received: 0 } });
+  const t = calcInvoice({ ...inv, payment: { received: 0 } }), fin = financeFromForm();
+  if (fin) {
+    // Whichever of down payment / finance amount was typed decides the other: together they make the bill total.
+    const typedFinance = Math.max(0, Number($('financeAmount').value) || 0);
+    if (!receivedTouched) $('received').value = financeTouched ? Math.max(0, t.grandTotal - typedFinance).toFixed(2) : '0.00';
+    const down = Math.min(t.grandTotal, Math.max(0, Number($('received').value) || 0));
+    if (!financeTouched) $('financeAmount').value = Math.max(0, t.grandTotal - down).toFixed(2);
+    inv.finance = { ...fin, amount: Math.max(0, Math.round((Number($('financeAmount').value) || 0) * 100) / 100) };
+    inv.payment.received = Math.min(Math.max(0, t.grandTotal - inv.finance.amount), down);
+    return inv;
+  }
   if (!receivedTouched) $('received').value = inv.payment.mode.startsWith('Credit') ? '0' : t.grandTotal.toFixed(2);
   inv.payment.received = Math.min(t.grandTotal, Math.max(0, Number($('received').value) || 0));
   return inv;
@@ -178,8 +249,15 @@ function setForm(inv) {
   $('itemRows').innerHTML = ''; (inv.items?.length ? inv.items : [{}]).forEach(it => $('itemRows').appendChild(createItemRow(it))); updateRemoveButtons();
   $('paymentMode').value = inv.payment?.mode || 'Cash'; $('received').value = inv.payment ? Number(inv.payment.received || 0).toFixed(2) : '';
   $('paymentRef').value = inv.payment?.reference || ''; $('notes').value = inv.notes || '';
+  renderFinanceOptions(inv.finance ? inv.finance.id || 'saved' : '', inv.finance?.name || '');
+  $('emiDay').value = String(inv.finance?.emiDay || 3); $('financeAmount').value = inv.finance ? Number(inv.finance.amount || 0).toFixed(2) : '';
+  financeTouched = Boolean(inv.finance);
+  // If the saved narration still ends with the untouched template text, keep updating that part when amounts change.
+  const filled = inv.finance ? financeNarration(narrationTemplate(), inv) : '';
+  autoNarration = filled && (inv.notes || '').endsWith(filled) ? filled : '';
+  narrationFigures = inv.finance ? financeValues(inv) : null;
   receivedTouched = Boolean(inv.payment); formDirty = false;
-  toggleInter(); updateBanner(); renderPreview();
+  toggleInter(); toggleFinance(); updateBanner(); renderPreview();
 }
 function newInvoice() {
   editing = null;
@@ -207,8 +285,14 @@ function updateBanner() {
 function changed() { formDirty = true; if (editing) updateBanner(); renderPreview(); }
 function setStatus(message, type = 'ok') { $('status').textContent = message; $('status').dataset.type = type; }
 
-$('invoiceForm').addEventListener('input', e => { if (e.target.id === 'received') receivedTouched = true; changed(); });
-$('invoiceForm').addEventListener('change', e => { if (e.target.id === 'supplyType') toggleInter(); if (e.target.id === 'paymentMode') { receivedTouched = false; } if (e.target.id === 'date' && !editing) refreshInvoiceNo(); changed(); });
+$('invoiceForm').addEventListener('input', e => { if (e.target.id === 'received') receivedTouched = true; if (e.target.id === 'financeAmount') financeTouched = true; changed(); });
+$('invoiceForm').addEventListener('change', e => {
+  if (e.target.id === 'supplyType') toggleInter();
+  if (e.target.id === 'paymentMode' && !$('financeCo').value) receivedTouched = false; // a typed down payment stays when its mode changes
+  if (e.target.id === 'financeCo') onFinanceChange();
+  if (e.target.id === 'date' && !editing) refreshInvoiceNo();
+  changed();
+});
 $('addItem').onclick = () => { $('itemRows').appendChild(createItemRow({})); updateRemoveButtons(); $('itemRows').lastElementChild.querySelector('.it-model').focus(); changed(); };
 $('receivedFull').onclick = () => { receivedTouched = false; changed(); };
 $('newInvoice').onclick = async () => { if (formDirty && !(await confirmBox('Start a new bill?', 'Changes on this form that are not saved will be lost.', 'New bill'))) return; newInvoice(); };
@@ -258,7 +342,9 @@ function shareWhatsApp(inv) {
   const t = calcInvoice(inv), s = S().settings;
   const lines = [`Dear ${inv.customer.name},`, `Thank you for shopping at ${inv.businessName || s.businessName}.`, '', `Invoice: ${inv.invoiceNo}`, `Date: ${dateForDisplay(inv.date)}`,
     ...inv.items.map(i => `• ${i.model} x${i.quantity}`), `Total: ₹${format(t.grandTotal)}`];
+  if (t.financeAmount > 0) lines.push(`Down payment: ₹${format(t.downPayment)}`, `Finance (${inv.finance.name}): ₹${format(t.financeAmount)}`);
   if (t.balance > 0.004) lines.push(`Balance due: ₹${format(t.balance)}`);
+  if (inv.notes) lines.push('', inv.notes);
   window.open(waLink(inv.customer.phone, lines.join('\n')), '_blank');
 }
 function duplicateInvoice(inv) {
@@ -269,10 +355,17 @@ function duplicateInvoice(inv) {
 function openInvoice(inv) { editing = inv; setForm(inv); show('billing'); setStatus(''); }
 
 /* ---------- invoice preview (also what Print prints) ---------- */
+// "Received" on the bill, or the down payment and the finance company's part for a financed bill.
+function receivedRows(inv, t) {
+  return t.financeAmount > 0 ? [['Down payment', t.downPayment], [`Finance (${inv.finance.name})`, t.financeAmount]] : [['Received', t.received]];
+}
 function renderPreview() {
   if (!$('itemRows').children.length) return;
-  const inv = readForm(), t = calcInvoice(inv);
+  const inv = readForm();
+  syncNarration(inv); inv.notes = cleanText($('notes').value, NARRATION_MAX);
+  const t = calcInvoice(inv), len = $('notes').value.length;
   $('balanceDue').value = format(t.balance);
+  $('narrationCount').textContent = len > NARRATION_MAX * 0.8 ? `${len} / ${NARRATION_MAX}` : '';
   const g = !inv.noGst; // GST bill (main shop) or plain bill (second shop)
   const taxCells = it => g ? `<td class="num">${it.taxRate}%</td><td class="num">${format(it.net)}</td>${t.inter ? `<td class="num">${format(it.igst)}</td>` : `<td class="num">${format(it.cgst)}</td><td class="num">${format(it.sgst)}</td>`}` : '';
   const rows = t.items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.model)}${it.imei ? `<br><small>IMEI: ${esc(it.imei)}</small>` : ''}</td>${g ? `<td>${esc(it.hsn)}</td>` : ''}<td class="num">${it.quantity}</td><td class="num">${format(it.price)}</td>${t.discount ? `<td class="num">${format(it.discount)}</td>` : ''}${taxCells(it)}<td class="num"><strong>${format(it.lineTotal)}</strong></td></tr>`).join('');
@@ -284,14 +377,14 @@ function renderPreview() {
     <header class="invoice-head"><h1>${esc(inv.businessName)}</h1><p>${esc(inv.businessAddress)}</p>${inv.businessPhone || inv.businessEmail ? `<p>${inv.businessPhone ? `Ph: ${esc(inv.businessPhone)}` : ''}${inv.businessPhone && inv.businessEmail ? ' · ' : ''}${esc(inv.businessEmail)}</p>` : ''}</header>
     <div class="invoice-title">${g ? 'TAX INVOICE' : 'INVOICE'}${inv.status === 'cancelled' ? ' <span class="stamp">CANCELLED</span>' : ''}${g ? '<small>Original for Recipient</small>' : ''}</div>
     ${g ? `<div class="gst-row"><span><strong>GSTIN: ${esc(inv.gstin)}</strong></span><span>State: ${esc(inv.state)} &nbsp; Code: ${esc(inv.stateCode)}</span></div>` : ''}
-    <section class="invoice-meta"><span><strong>Invoice No: ${esc(inv.invoiceNo)}</strong>${g ? `<br>Place of supply: ${pos}` : ''}</span><span class="r"><strong>Date: ${dateForDisplay(inv.date)}</strong><br>Payment: ${esc(inv.payment.mode)}</span></section>
+    <section class="invoice-meta"><span><strong>Invoice No: ${esc(inv.invoiceNo)}</strong>${g ? `<br>Place of supply: ${pos}` : ''}</span><span class="r"><strong>Date: ${dateForDisplay(inv.date)}</strong><br>Payment: ${esc(paymentLabel(inv))}</span></section>
     <section class="customer"><small>Bill to</small><br><strong>${esc(inv.customer.name) || '&nbsp;'}</strong>${inv.customer.address ? `<br>${esc(inv.customer.address)}` : ''}${inv.customer.phone ? `<br>Mobile: ${esc(inv.customer.phone)}` : ''}${inv.customer.gstin ? `<br>GSTIN: ${esc(inv.customer.gstin)}` : ''}</section>
     <div class="table-scroll"><table class="item-table"><thead><tr><th>Sl</th><th>Item</th>${g ? '<th>HSN</th>' : ''}<th class="num">Qty</th><th class="num">Rate</th>${t.discount ? '<th class="num">Disc</th>' : ''}${g ? `<th class="num">GST</th><th class="num">Taxable</th>${t.inter ? '<th class="num">IGST</th>' : '<th class="num">CGST</th><th class="num">SGST</th>'}` : ''}<th class="num">Total</th></tr></thead><tbody>${rows}</tbody>
     <tfoot><tr><td></td><td><strong>Total</strong></td>${g ? '<td></td>' : ''}<td class="num">${t.qty}</td><td></td>${t.discount ? `<td class="num">${format(t.discount)}</td>` : ''}${g ? `<td></td><td class="num">${format(t.net)}</td>${t.inter ? `<td class="num">${format(t.igst)}</td>` : `<td class="num">${format(t.cgst)}</td><td class="num">${format(t.sgst)}</td>`}` : ''}<td class="num"><strong>${format(t.total)}</strong></td></tr></tfoot></table></div>
     <div class="summary"><table>${sumRows.map(([l, v]) => `<tr><td>${l}</td><td>${v < 0 ? '-' : ''}${format(Math.abs(v))}</td></tr>`).join('')}<tr class="grand"><td>Grand Total</td><td>₹${format(t.grandTotal)}</td></tr>
-      ${inv.status !== 'cancelled' ? `<tr><td>Received</td><td>${format(t.received)}</td></tr>${t.balance > 0.004 ? `<tr class="due"><td>Balance due</td><td>${format(t.balance)}</td></tr>` : ''}` : ''}</table></div>
+      ${inv.status !== 'cancelled' ? `${receivedRows(inv, t).map(([l, v]) => `<tr><td>${esc(l)}</td><td>${format(v)}</td></tr>`).join('')}${t.balance > 0.004 ? `<tr class="due"><td>Balance due</td><td>${format(t.balance)}</td></tr>` : ''}` : ''}</table></div>
     <p class="words">${numberToWords(t.grandTotal)}</p>
-    ${inv.notes ? `<p class="small-note">Note: ${esc(inv.notes)}</p>` : ''}${inv.bankDetails ? `<p class="small-note">Bank: ${esc(inv.bankDetails)}</p>` : ''}
+    ${inv.notes ? `<div class="narration"><strong>Narration</strong>${esc(inv.notes)}</div>` : ''}${inv.bankDetails ? `<p class="small-note">Bank: ${esc(inv.bankDetails)}</p>` : ''}
     <footer class="foot"><span>${esc(inv.terms)} Certified that the particulars given above are true and correct.</span><span class="signature">For ${esc(inv.businessName)}${S().settings?.signature ? `<img src="${S().settings.signature}" alt="Signature">` : ''}<div>Authorised Signatory</div></span></footer>`;
 }
 
@@ -377,13 +470,13 @@ $('itemRows').addEventListener('keydown', e => {
    ========================================================================= */
 const statusLabel = { paid: 'Paid', partial: 'Part paid', due: 'Due', cancelled: 'Cancelled' };
 function invoiceMatches(inv, q) {
-  return !q || `${inv.invoiceNo} ${inv.customer.name} ${inv.customer.phone} ${inv.customer.gstin} ${inv.items.map(i => `${i.model} ${i.imei}`).join(' ')}`.toLowerCase().includes(q);
+  return !q || `${inv.invoiceNo} ${inv.customer.name} ${inv.customer.phone} ${inv.customer.gstin} ${inv.items.map(i => `${i.model} ${i.imei}`).join(' ')} ${inv.finance?.name || ''} ${inv.notes || ''}`.toLowerCase().includes(q);
 }
 function billCard(inv) {
   const t = calcInvoice(inv), st = paymentStatus(inv), items = inv.items;
   const summary = items.length > 1 ? `${items[0].model} +${items.length - 1} more` : items[0]?.model;
   return `<div class="bill" data-id="${esc(inv.id)}">
-    <div class="bill-main"><strong>${esc(inv.customer.name)}</strong> <span class="badge ${st}">${statusLabel[st]}</span>
+    <div class="bill-main"><strong>${esc(inv.customer.name)}</strong> <span class="badge ${st}">${statusLabel[st]}</span>${inv.finance ? ` <span class="badge finance">${esc(inv.finance.name)}</span>` : ''}
       <small>${esc(inv.invoiceNo)} · ${dateForDisplay(inv.date)}${inv.customer.phone ? ` · ${esc(inv.customer.phone)}` : ''}</small><small>${esc(summary)}</small></div>
     <div class="bill-amt"><strong>${money(t.grandTotal)}</strong>${t.balance > 0.004 ? `<small class="due-text">Due ${money(t.balance)}</small>` : ''}</div>
     <div class="bill-actions">
@@ -423,7 +516,8 @@ async function receivePayment(inv) {
     body.querySelector('#dlgOk').addEventListener('click', e => { e.preventDefault(); done({ amount: Number(body.querySelector('#dlgAmt').value) || 0, mode: body.querySelector('#dlgMode').value }); });
   });
   if (!r || typeof r !== 'object' || r.amount <= 0) return;
-  const received = Math.min(t.grandTotal, t.received + r.amount);
+  // `payment.received` is what the customer paid (the down payment on a financed bill); the finance company's part is separate.
+  const received = Math.min(t.grandTotal - t.financeAmount, t.downPayment + r.amount);
   const mode = inv.payment.mode.startsWith('Credit') || inv.payment.mode === r.mode ? r.mode : inv.payment.mode;
   const history = [...(inv.payment.history || []), { date: today(), amount: r.amount, mode: r.mode }];
   await store.updateInvoice({ ...inv, payment: { ...inv.payment, mode, received, history } });
@@ -431,7 +525,7 @@ async function receivePayment(inv) {
 }
 function renderBills() {
   const q = $('billSearch').value.trim().toLowerCase(), from = $('billFrom').value, to = $('billTo').value, st = $('billStatus').value;
-  const list = myInvoices().filter(i => invoiceMatches(i, q) && (!from || i.date >= from) && (!to || i.date <= to) && (!st || paymentStatus(i) === st))
+  const list = myInvoices().filter(i => invoiceMatches(i, q) && (!from || i.date >= from) && (!to || i.date <= to) && (!st || (st === 'finance' ? Boolean(i.finance) : paymentStatus(i) === st)))
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
   const shown = list.slice(0, billLimit), active = list.filter(i => i.status !== 'cancelled');
   $('billSummary').textContent = list.length ? `${list.length} bill${list.length === 1 ? '' : 's'} · Sales ${money(active.reduce((s, i) => s + calcInvoice(i).grandTotal, 0))} · Due ${money(active.reduce((s, i) => s + calcInvoice(i).balance, 0))}` : '';
@@ -571,13 +665,18 @@ async function printLabels(products) {
    ========================================================================= */
 function monthStart(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; }
 function summarise(invoices) {
-  const r = { count: 0, sales: 0, net: 0, cgst: 0, sgst: 0, igst: 0, received: 0, due: 0, discount: 0, b2b: 0, cancelled: 0, rates: {}, hsn: {}, modes: {} };
+  const r = { count: 0, sales: 0, net: 0, cgst: 0, sgst: 0, igst: 0, received: 0, due: 0, discount: 0, b2b: 0, cancelled: 0, rates: {}, hsn: {}, modes: {}, financed: 0, financeCount: 0, finance: {} };
   for (const inv of invoices) {
     if (inv.status === 'cancelled') { r.cancelled++; continue; }
     const t = calcInvoice(inv);
     r.count++; r.sales += t.grandTotal; r.net += t.net; r.cgst += t.cgst; r.sgst += t.sgst; r.igst += t.igst; r.received += t.received; r.due += t.balance; r.discount += t.discount;
     if (inv.customer.gstin) r.b2b++;
-    r.modes[inv.payment.mode] = (r.modes[inv.payment.mode] || 0) + t.received;
+    r.modes[inv.payment.mode] = (r.modes[inv.payment.mode] || 0) + t.downPayment;
+    if (t.financeAmount > 0) {
+      const name = inv.finance.name, f = r.finance[name] ||= { count: 0, amount: 0, sales: 0 };
+      f.count++; f.amount += t.financeAmount; f.sales += t.grandTotal; r.financed += t.financeAmount; r.financeCount++;
+      r.modes[`${name} (finance)`] = (r.modes[`${name} (finance)`] || 0) + t.financeAmount;
+    }
     for (const it of t.items) {
       const rate = r.rates[it.taxRate] ||= { net: 0, cgst: 0, sgst: 0, igst: 0, total: 0 };
       rate.net += it.net; rate.cgst += it.cgst; rate.sgst += it.sgst; rate.igst += it.igst; rate.total += it.lineTotal;
@@ -618,7 +717,10 @@ function renderReports() {
   const r = summarise(reportInvoices());
   const bills = `${r.count} bills${r.cancelled ? ` · ${r.cancelled} cancelled` : ''}`;
   $('repCards').innerHTML = (P().gst ? card('Sales (incl. GST)', money(r.sales), bills) + card('Taxable value', money(r.net)) + card('CGST + SGST', money(r.cgst + r.sgst), `${money(r.cgst)} each`) + card('IGST', money(r.igst)) : card('Sales', money(r.sales), bills))
-    + card('Received', money(r.received)) + card('Due', money(r.due), '', r.due > 0.004 ? 'warn' : '') + (P().gst ? card('B2B bills', String(r.b2b), 'with customer GSTIN') : '') + card('Discounts given', money(r.discount));
+    + card('Received', money(r.received), r.financed ? `incl. ${money(r.financed)} from finance` : '') + card('Due', money(r.due), '', r.due > 0.004 ? 'warn' : '') + (P().gst ? card('B2B bills', String(r.b2b), 'with customer GSTIN') : '') + card('Discounts given', money(r.discount))
+    + (r.financeCount ? card('Finance (EMI) sales', money(r.financed), `${r.financeCount} bill${r.financeCount === 1 ? '' : 's'}`) : '');
+  const fin = Object.entries(r.finance).sort((a, b) => b[1].amount - a[1].amount);
+  $('repFinance').innerHTML = fin.length ? fin.map(([name, f]) => `<div class="line"><span>${esc(name)}<small>${f.count} bill${f.count === 1 ? '' : 's'} · bill total ${money(f.sales)}</small></span><strong>${money(f.amount)}</strong></div>`).join('') : '<p class="empty">No financed bills in this period.</p>';
   const rates = Object.entries(r.rates).sort((a, b) => a[0] - b[0]);
   $('repRates').innerHTML = rates.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Rate</th><th class="num">Taxable</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">IGST</th><th class="num">Total</th></tr></thead><tbody>${rates.map(([k, v]) => `<tr><td>${k}%</td><td class="num">${format(v.net)}</td><td class="num">${format(v.cgst)}</td><td class="num">${format(v.sgst)}</td><td class="num">${format(v.igst)}</td><td class="num">${format(v.total)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">No sales in this period.</p>';
   const modes = Object.entries(r.modes).filter(([, v]) => v > 0);
@@ -631,8 +733,8 @@ function downloadCsv(name, rows) {
   saveFile(new TextEncoder().encode(text), `${name}-${$('repFrom').value}_to_${$('repTo').value}.csv`, 'text/csv').catch(e => toast(String(e.message || e), 'error'));
 }
 const r2 = n => (Math.round(n * 100) / 100).toFixed(2);
-$('csvBills').onclick = () => downloadCsv('bills', [['Invoice No', 'Date', 'Status', 'Customer', 'Phone', 'Customer GSTIN', 'Place of supply', 'Taxable', 'CGST', 'SGST', 'IGST', 'Round off', 'Grand total', 'Received', 'Balance', 'Payment mode'],
-  ...reportInvoices().sort((a, b) => a.date.localeCompare(b.date) || a.invoiceNo.localeCompare(b.invoiceNo)).map(i => { const t = calcInvoice(i); return [i.invoiceNo, i.date, i.status === 'cancelled' ? 'Cancelled' : statusLabel[paymentStatus(i)], i.customer.name, i.customer.phone, i.customer.gstin, t.inter ? `${i.customer.state} ${i.customer.stateCode}` : `${i.state} ${i.stateCode}`, r2(t.net), r2(t.cgst), r2(t.sgst), r2(t.igst), r2(t.roundOff), r2(t.grandTotal), r2(t.received), r2(t.balance), i.payment.mode]; })]);
+$('csvBills').onclick = () => downloadCsv('bills', [['Invoice No', 'Date', 'Status', 'Customer', 'Phone', 'Customer GSTIN', 'Place of supply', 'Taxable', 'CGST', 'SGST', 'IGST', 'Round off', 'Grand total', 'Received', 'Balance', 'Payment mode', 'Finance', 'Finance amount', 'Down payment', 'EMI date', 'Narration'],
+  ...reportInvoices().sort((a, b) => a.date.localeCompare(b.date) || a.invoiceNo.localeCompare(b.invoiceNo)).map(i => { const t = calcInvoice(i); return [i.invoiceNo, i.date, i.status === 'cancelled' ? 'Cancelled' : statusLabel[paymentStatus(i)], i.customer.name, i.customer.phone, i.customer.gstin, t.inter ? `${i.customer.state} ${i.customer.stateCode}` : `${i.state} ${i.stateCode}`, r2(t.net), r2(t.cgst), r2(t.sgst), r2(t.igst), r2(t.roundOff), r2(t.grandTotal), r2(t.received), r2(t.balance), i.payment.mode, i.finance?.name || '', i.finance ? r2(t.financeAmount) : '', i.finance ? r2(t.downPayment) : '', i.finance ? ordinal(i.finance.emiDay) : '', i.notes || '']; })]);
 $('csvItems').onclick = () => downloadCsv('items', [['Invoice No', 'Date', 'Customer', 'Item', 'HSN', 'IMEI', 'Qty', 'Rate', 'Discount', 'GST %', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total'],
   ...reportInvoices().filter(i => i.status !== 'cancelled').flatMap(i => calcInvoice(i).items.map(it => [i.invoiceNo, i.date, i.customer.name, it.model, it.hsn, it.imei, it.quantity, r2(it.price), r2(it.discount), it.taxRate, r2(it.net), r2(it.cgst), r2(it.sgst), r2(it.igst), r2(it.lineTotal)]))]);
 $('csvHsn').onclick = () => downloadCsv('hsn-summary', [['HSN', 'GST %', 'Qty', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total'],
@@ -688,9 +790,48 @@ $('secondShopForm').addEventListener('submit', async e => {
     : `Saved ${store.where}.${wasEnabled ? '' : ' Tap the shop name at the top left to switch between your shops.'}`;
 });
 
+/* ---------- finance companies (EMI) ---------- */
+let financeDirty = false; // edited in Settings but not saved yet: don't overwrite with synced changes
+const emiDayOptions = day => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}" ${i + 1 === Number(day) ? 'selected' : ''}>${ordinal(i + 1)}</option>`).join('');
+function renderFinanceSettings(list = financeList()) {
+  $('financeList').innerHTML = list.length ? list.map(f => `<div class="finance-item" data-id="${esc(f.id)}">
+      <div class="form-grid">
+        <label>Name<input class="fin-name" maxlength="40" value="${esc(f.name)}" placeholder="e.g. HDB Financial"></label>
+        <label>EMI date<span class="req">Of every month</span><select class="fin-day">${emiDayOptions(f.emiDay)}</select></label>
+        <label class="wide">Narration template<textarea class="fin-template" rows="5" maxlength="${NARRATION_MAX}">${esc(f.template)}</textarea></label>
+      </div>
+      <div class="row-actions"><button type="button" class="secondary small" data-fin="default">Use default text</button><button type="button" class="secondary small" data-fin="remove">Remove</button></div>
+    </div>`).join('') : '<p class="hint">No finance companies. Add one to offer EMI on bills.</p>';
+  $('financeAdd').disabled = list.length >= MAX_FINANCES;
+}
+const readFinanceSettings = () => [...$('financeList').querySelectorAll('.finance-item')].map(el => ({ id: el.dataset.id, name: el.querySelector('.fin-name').value, emiDay: el.querySelector('.fin-day').value, template: el.querySelector('.fin-template').value }));
+function financeEdited(message = 'Not saved yet. Press "Save finance companies".') { financeDirty = true; $('financeStatus').textContent = message; }
+$('financeForm').addEventListener('input', () => financeEdited());
+$('financeAdd').onclick = () => {
+  const list = readFinanceSettings(); list.push({ id: '', name: '', emiDay: 3, template: FINANCE_TEMPLATE });
+  renderFinanceSettings(list); financeEdited(); $('financeList').lastElementChild.querySelector('.fin-name').focus();
+};
+$('financeList').addEventListener('click', e => {
+  const btn = e.target.closest('[data-fin]'); if (!btn) return;
+  const item = btn.closest('.finance-item');
+  if (btn.dataset.fin === 'default') item.querySelector('.fin-template').value = FINANCE_TEMPLATE;
+  if (btn.dataset.fin === 'remove') { const list = readFinanceSettings(); list.splice([...$('financeList').children].indexOf(item), 1); renderFinanceSettings(list); }
+  financeEdited(btn.dataset.fin === 'remove' ? 'Removed. Press "Save finance companies" to keep this change. Old bills keep their finance details.' : undefined);
+});
+$('financeForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const typed = readFinanceSettings(), finances = cleanFinances(typed);
+  if (typed.some(f => !f.name.trim())) { $('financeStatus').textContent = 'Give every finance company a name (or remove the empty one).'; return; }
+  try { await store.saveSettings({ ...S().settings, finances }); }
+  catch (error) { $('financeStatus').textContent = `Could not save: ${error.message || error}`; return; }
+  financeDirty = false; document.activeElement?.blur(); renderFinanceSettings();
+  $('financeStatus').textContent = `Saved ${store.where}. ${finances.length} finance compan${finances.length === 1 ? 'y' : 'ies'}.`;
+});
+
 function fillSettingsForm() {
   const s = S().settings; if (!s) return;
   renderSignatureSetting();
+  if (!financeDirty && !document.activeElement?.closest('#financeForm')) renderFinanceSettings();
   if (!document.activeElement?.closest('#secondShopForm')) fillSecondShopForm(s.second);
   if (document.activeElement?.closest('#businessForm')) return; // don't overwrite while typing
   settingFields.forEach(k => { $(k).value = s[k] ?? ''; }); $('roundUp').checked = s.roundUp; numberExample();
@@ -839,11 +980,89 @@ function renderCloudPanel() {
 }
 
 /* =========================================================================
+   App updates (Android app): new versions come from the GitHub releases page
+   ========================================================================= */
+let pendingUpdate = null;
+const UPDATE_CHECK_KEY = 'mm-update-checked', UPDATE_LATER_KEY = 'mm-update-later';
+function renderAppPanel() {
+  $('appVersion').textContent = APP_VERSION;
+  if (isNativeApp()) {
+    $('appActions').innerHTML = pendingUpdate ? `<button type="button" id="updateNow">Update to ${esc(pendingUpdate.version)}</button>` : '<button type="button" class="secondary" id="checkUpdate">Check for updates</button>';
+    $('appHint').textContent = 'The app checks for a new version each time it opens, and offers to download and install it.';
+  } else {
+    $('appActions').innerHTML = `<a class="button secondary" href="${RELEASES_PAGE}" target="_blank" rel="noopener">Download the Android app</a>`;
+    $('appHint').textContent = 'This is the web version. It is always up to date when the website is updated.';
+  }
+  $('checkUpdate')?.addEventListener('click', () => checkForUpdate({ manual: true }));
+  $('updateNow')?.addEventListener('click', () => updateDialog(pendingUpdate));
+}
+function renderUpdateBanner() {
+  let later = ''; try { later = sessionStorage.getItem(UPDATE_LATER_KEY) || ''; } catch { /* ignore */ }
+  const b = $('updateBanner');
+  if (!pendingUpdate || later === pendingUpdate.version) { b.hidden = true; return; }
+  b.innerHTML = `<span>🔔 A new version of the app (<strong>${esc(pendingUpdate.version)}</strong>) is ready.</span><span class="spacer"></span><button type="button" class="small" id="updateOpen">Update</button><button type="button" class="secondary small" id="updateLater">Later</button>`;
+  b.hidden = false;
+  $('updateOpen').onclick = () => updateDialog(pendingUpdate);
+  $('updateLater').onclick = () => { try { sessionStorage.setItem(UPDATE_LATER_KEY, pendingUpdate.version); } catch { /* ignore */ } b.hidden = true; };
+}
+async function checkForUpdate({ manual = false } = {}) {
+  if (!isNativeApp()) return;
+  if (manual) $('updateStatus').textContent = 'Checking for updates…';
+  try {
+    pendingUpdate = await findUpdate();
+    try { localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now())); } catch { /* ignore */ }
+    if (manual) $('updateStatus').textContent = pendingUpdate ? `Version ${pendingUpdate.version} is available.` : `You have the latest version (${APP_VERSION}).`;
+    if (!pendingUpdate) removeDownloadedApk();
+    renderUpdateBanner(); renderAppPanel();
+    if (manual && pendingUpdate) updateDialog(pendingUpdate);
+  } catch (error) {
+    if (manual) $('updateStatus').textContent = `Could not check for updates: ${error.message || error}`;
+    else console.warn('Update check failed', error);
+  }
+}
+// Quietly check on start, and again when the app comes back to the screen after a few hours.
+function checkForUpdateIfDue(minHours) {
+  let last = 0; try { last = Number(localStorage.getItem(UPDATE_CHECK_KEY)) || 0; } catch { /* ignore */ }
+  if (Date.now() - last >= minHours * 3600000) checkForUpdate();
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && isNativeApp()) checkForUpdateIfDue(6); });
+async function updateDialog(release) {
+  if (!release) return;
+  const size = release.apk.size ? ` (${(release.apk.size / 1048576).toFixed(1)} MB)` : '';
+  const notes = plainNotes(release.notes);
+  await dialog(`<h3>Update to version ${esc(release.version)}</h3>
+    <p>You have version ${esc(APP_VERSION)}. Your bills are kept: the update installs over this app.</p>
+    ${notes ? `<div class="update-notes">${esc(notes)}</div>` : ''}
+    <div id="updProgress" hidden><div class="progress"><span id="updBar"></span></div><p class="hint" id="updText">Downloading…</p></div>
+    <p class="hint">Android will ask you to confirm. If it asks, allow this app to install apps, then go back and tap Update.</p>
+    <div class="actions end"><button class="secondary" data-result="close">Later</button><button class="secondary" id="updBrowser" hidden>Download in browser</button><button id="updGo">Download and install${size}</button></div>`, (body, done) => {
+    const go = body.querySelector('#updGo'), text = body.querySelector('#updText'), bar = body.querySelector('#updBar');
+    let downloaded = null; // path of the downloaded APK, so "Open installer again" doesn't download it again
+    body.querySelector('#updBrowser').addEventListener('click', e => { e.preventDefault(); window.open(release.apk.url, '_blank'); done('browser'); });
+    go.addEventListener('click', async e => {
+      e.preventDefault();
+      if (downloaded) { openInstaller(downloaded).catch(error => { text.textContent = String(error.message || error); }); return; }
+      go.disabled = true; go.textContent = 'Downloading…';
+      body.querySelector('#updProgress').hidden = false;
+      try {
+        downloaded = await downloadAndInstall(release, f => { bar.style.width = `${Math.round(f * 100)}%`; text.textContent = `Downloading… ${Math.round(f * 100)}%`; });
+        text.textContent = 'Downloaded. Android\'s installer is open: tap Update (or Install).';
+        go.textContent = 'Open installer again'; go.disabled = false;
+      } catch (error) {
+        text.textContent = `${error.message || error} You can also download it in the browser and open the downloaded file.`;
+        go.textContent = 'Try again'; go.disabled = false; body.querySelector('#updBrowser').hidden = false;
+      }
+    });
+  });
+}
+
+/* =========================================================================
    Start up
    ========================================================================= */
 async function boot() {
   await localStore.init();
-  newInvoice(); show('dashboard');
+  newInvoice(); show('dashboard'); renderAppPanel();
+  if (isNativeApp()) setTimeout(() => checkForUpdateIfDue(1), 3000);
   const config = window.MM_FIREBASE_CONFIG;
   if (config && config.apiKey && config.projectId) {
     try {

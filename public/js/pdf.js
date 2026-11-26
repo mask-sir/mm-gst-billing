@@ -1,6 +1,6 @@
 // Self-contained A4 PDF writer for invoices (no library, works offline). Built-in Helvetica only,
 // so text is limited to Latin-1; anything else is shown as "?" rather than breaking the file.
-import { calcInvoice, format, dateForDisplay, numberToWords, paymentStatus } from './util.js';
+import { calcInvoice, format, dateForDisplay, numberToWords, paymentStatus, paymentLabel } from './util.js';
 import { encodeCode128, barRuns } from './barcode.js';
 
 const W = 595, H = 842, M = 40, CW = W - M * 2, TOP = H - M, BOTTOM = M;
@@ -71,7 +71,7 @@ function letterhead(ps, inv, totals) {
   ps.line(M, ps.p.y, M + CW, ps.p.y, 0.6); ps.p.y -= 14;
   ps.text(`Invoice No: ${inv.invoiceNo}`, M, ps.p.y, 9.5, true); ps.right(`Date: ${dateForDisplay(inv.date)}`, M + CW, ps.p.y, 9.5, true); ps.p.y -= 13;
   if (!inv.noGst) ps.text(`Place of supply: ${totals.inter ? `${inv.customer.state || 'Other state'}${inv.customer.stateCode ? ` (${inv.customer.stateCode})` : ''}` : `${inv.state} (${inv.stateCode})`}`, M, ps.p.y, 8.5);
-  ps.right(`Payment: ${inv.payment?.mode || 'Cash'}`, M + CW, ps.p.y, 8.5); ps.p.y -= 8;
+  ps.right(`Payment: ${paymentLabel(inv)}`, M + CW, ps.p.y, 8.5); ps.p.y -= 8;
   ps.line(M, ps.p.y, M + CW, ps.p.y, 0.6); ps.p.y -= 13;
   ps.text('Bill to:', M, ps.p.y, 8, true); ps.p.y -= 12;
   ps.text(inv.customer?.name || '', M, ps.p.y, 10, true); ps.p.y -= 12;
@@ -100,6 +100,24 @@ function itemRow(ps, cols, it, sl) {
     c.right ? ps.right(v[c.key], c.x + c.w - 2, y, 8, c.key === 'total') : ps.text(v[c.key], c.x + 2, y, 8);
   }
   ps.p.y -= h; ps.line(M, ps.p.y + 9, M + CW, ps.p.y + 9, 0.2);
+}
+
+// Narration (EMI details etc.) in a thin box. A long narration continues on the next page.
+function narrationBox(ps, text) {
+  const lines = wrap(text, 8, CW - 12);
+  let first = true;
+  ps.p.y -= 4;
+  while (first || lines.length) {
+    const room = Math.floor((ps.p.y - BOTTOM - 10 - (first ? 11 : 0)) / 10);
+    if (room < 1) { ps.pages.push({ ops: [], y: TOP }); continue; }
+    const chunk = lines.splice(0, room), top = ps.p.y + 6;
+    let y = ps.p.y - 4;
+    if (first) { ps.text('Narration', M + 6, y, 8, true); y -= 11; first = false; }
+    for (const l of chunk) { ps.text(l, M + 6, y, 8); y -= 10; }
+    const bottom = y + 5; // 5 pt below the last line's baseline
+    ps.p.ops.push(`q 0.6 w ${M} ${bottom.toFixed(2)} ${CW} ${(top - bottom).toFixed(2)} re S Q`);
+    ps.p.y = bottom - 14;
+  }
 }
 
 // options.signature: from signatureForPdf() in signature.js ({ w, h, rgb, alpha, flate }), or null.
@@ -142,12 +160,13 @@ export function makeInvoicePdf(inv, { signature = null } = {}) {
   ps.text('Grand Total', boxL, ry, 12, true); ps.right(`Rs. ${format(totals.grandTotal)}`, boxR, ry, 12, true); ry -= 15;
   const status = paymentStatus(inv);
   if (status !== 'cancelled') {
-    ps.text('Received', boxL, ry, 8.5); ps.right(format(totals.received), boxR, ry, 8.5); ry -= 11;
+    const paid = totals.financeAmount > 0 ? [['Down payment', totals.downPayment], [`Finance (${inv.finance.name})`, totals.financeAmount]] : [['Received', totals.received]];
+    for (const [label, val] of paid) { ps.text(label, boxL, ry, 8.5); ps.right(format(val), boxR, ry, 8.5); ry -= 11; }
     if (totals.balance > 0.004) { ps.text('Balance due', boxL, ry, 8.5, true); ps.right(format(totals.balance), boxR, ry, 8.5, true); ry -= 11; }
   }
   ps.p.y = Math.min(ly, ry) - 10;
   for (const l of wrap(numberToWords(totals.grandTotal), 9, CW)) { ps.text(l, M, ps.p.y, 9, true); ps.p.y -= 12; }
-  if (inv.notes) { ps.p.y -= 2; for (const l of wrap(`Note: ${inv.notes}`, 8, CW)) { ps.text(l, M, ps.p.y, 8); ps.p.y -= 10; } }
+  if (inv.notes) narrationBox(ps, inv.notes);
   if (inv.bankDetails) { ps.p.y -= 2; for (const l of wrap(`Bank: ${inv.bankDetails}`, 8, CW)) { ps.text(l, M, ps.p.y, 8); ps.p.y -= 10; } }
   const signSpace = signature ? 32 : 0; // extra height for the signature image
   ps.p.y -= 6; ps.ensure(80 + signSpace);
