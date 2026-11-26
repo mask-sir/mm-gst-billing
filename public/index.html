@@ -3,16 +3,20 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="GST billing software for MM Mobiles">
-  <meta name="theme-color" content="#0a6f65">
+  <meta name="theme-color" content="#0b1f2a">
   <title>MM Mobiles - GST Billing</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="view-dashboard">
+<div class="app">
+  <!-- Shop name (top of the sidebar on a computer, top left on a phone). Tap to switch shops. -->
+  <div class="brand-wrap no-print">
+    <button type="button" class="brand" id="brandBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="shopMenu"><span class="brand-logo" id="brandLogo">MM</span><span class="brand-text"><strong id="brandName">MM MOBILES</strong><small id="brandSub">GST billing</small></span><span class="brand-caret" id="brandCaret" aria-hidden="true" hidden>&#9662;</span></button>
+    <div class="shop-menu" id="shopMenu" role="menu" aria-label="Switch shop" hidden></div>
+  </div>
+
   <header class="topbar no-print">
-    <div class="brand-wrap">
-      <button type="button" class="brand" id="brandBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="shopMenu"><span class="brand-logo" id="brandLogo">MM</span><span class="brand-text"><strong id="brandName">MM MOBILES</strong><small id="brandSub">GST billing</small></span><span class="brand-caret" id="brandCaret" aria-hidden="true" hidden>&#9662;</span></button>
-      <div class="shop-menu" id="shopMenu" role="menu" aria-label="Switch shop" hidden></div>
-    </div>
+    <label class="global-search"><span data-icon="search" data-size="18"></span><input id="globalSearch" type="search" placeholder="Search bills: customer, phone, invoice no., IMEI" aria-label="Search bills"></label>
     <div class="top-actions">
       <button type="button" class="sync-chip" id="syncChip" data-state="local" title="Where your bills are saved">Local</button>
       <button type="button" id="signInBtn" class="google-btn" hidden><svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Sign in with Google</span></button>
@@ -20,222 +24,328 @@
     </div>
   </header>
 
-  <nav class="nav no-print" id="nav">
-    <button type="button" data-view="dashboard" class="active">Dashboard</button>
-    <button type="button" data-view="billing">New bill</button>
-    <button type="button" data-view="bills">Bills</button>
-    <button type="button" data-view="customers">Customers</button>
-    <button type="button" data-view="products">Products</button>
-    <button type="button" data-view="reports">Reports</button>
-    <button type="button" data-view="settings">Settings</button>
+  <!-- Navigation: a sidebar on a computer, a bar at the bottom on a phone -->
+  <nav class="nav no-print" id="nav" aria-label="Main">
+    <button type="button" class="nav-sale" data-view="billing" data-new-sale><span data-icon="plus" data-size="22"></span><span>New sale</span></button>
+    <button type="button" data-view="dashboard" class="active"><span data-icon="home"></span><span>Home</span></button>
+    <button type="button" data-view="bills"><span data-icon="receipt"></span><span>Bills</span></button>
+    <button type="button" data-view="customers" class="side-only"><span data-icon="users"></span><span>Customers</span></button>
+    <button type="button" data-view="products"><span data-icon="box"></span><span>Items</span></button>
+    <button type="button" data-view="reports" class="side-only"><span data-icon="chart"></span><span>Reports</span></button>
+    <button type="button" data-view="settings" class="side-only"><span data-icon="sliders"></span><span>Settings</span></button>
+    <button type="button" data-view="menu" class="phone-only"><span data-icon="grid"></span><span>Menu</span></button>
   </nav>
 
   <main>
     <div class="update-banner no-print" id="updateBanner" role="status" hidden></div>
-    <!-- DASHBOARD -->
+
+    <!-- HOME -->
     <section class="view no-print" data-view="dashboard">
-      <div class="view-head"><h2>Today at a glance</h2><button type="button" data-go="billing">+ New bill</button></div>
+      <div class="view-head"><div><h2>Home</h2><p class="sub" id="todayLabel"></p></div><button type="button" class="hide-phone" data-go="billing"><span data-icon="plus" data-size="18"></span>New sale</button></div>
       <div class="cards" id="dashCards"></div>
-      <div class="two-col">
-        <div class="panel"><h3>Sales — last 7 days</h3><div id="dashChart" class="bars"></div></div>
-        <div class="panel"><h3>Payments due</h3><div id="dashDues"></div></div>
+      <div class="quick">
+        <button type="button" data-go="billing"><span class="q-ic q-teal" data-icon="receipt"></span>New sale</button>
+        <button type="button" data-quick="collect"><span class="q-ic q-red" data-icon="wallet"></span>Receive payment</button>
+        <button type="button" data-quick="add-item"><span class="q-ic q-blue" data-icon="box"></span>Add item</button>
+        <button type="button" data-go="customers"><span class="q-ic q-violet" data-icon="users"></span>Customers</button>
+        <button type="button" data-go="reports"><span class="q-ic q-amber" data-icon="chart"></span>Reports</button>
+        <button type="button" data-quick="labels"><span class="q-ic q-slate" data-icon="barcode"></span>Print labels</button>
       </div>
-      <div class="panel"><div class="panel-head"><h3>Recent bills</h3><button type="button" class="secondary small" data-go="bills">All bills</button></div><div id="dashRecent"></div></div>
+      <div class="two-col">
+        <div class="panel"><div class="panel-head"><h3>Sales — last 7 days</h3></div><div id="dashChart" class="bars"></div></div>
+        <div class="panel"><div class="panel-head"><h3>To collect</h3><button type="button" class="link" data-quick="collect">See all</button></div><div id="dashDues"></div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h3>Recent bills</h3><button type="button" class="link" data-go="bills">All bills</button></div><div id="dashRecent"></div></div>
     </section>
 
-    <!-- BILLING -->
+    <!-- NEW SALE -->
     <section class="view billing" data-view="billing" hidden>
-      <div class="editor no-print">
-        <div class="edit-banner" id="editBanner" hidden></div>
-        <form id="invoiceForm" novalidate autocomplete="off">
-          <h3>Customer</h3>
-          <div class="form-grid">
-            <label class="ac">Name<span class="req">Required</span><input id="customerName" maxlength="100" placeholder="Customer name"><div class="ac-list" hidden></div></label>
-            <label class="ac">Phone<input id="phone" inputmode="tel" maxlength="20" placeholder="10-digit mobile"><div class="ac-list" hidden></div></label>
-            <label class="wide">Address<textarea id="address" rows="2" maxlength="300" placeholder="Customer address"></textarea></label>
-            <label class="gst-only">Customer GSTIN<span class="req">Optional (B2B)</span><input id="customerGstin" maxlength="15" placeholder="e.g. 32ABCDE1234F1Z5" style="text-transform:uppercase"></label>
-            <label class="gst-only">Sale type<select id="supplyType"><option value="intra">Within state (CGST + SGST)</option><option value="inter">Other state (IGST)</option></select></label>
-            <label class="inter-only" hidden>Customer state<input id="customerState" maxlength="50" placeholder="e.g. TAMIL NADU"></label>
-            <label class="inter-only" hidden>State code<input id="customerStateCode" maxlength="5" placeholder="e.g. 33"></label>
-          </div>
-
-          <h3>Invoice</h3>
-          <div class="form-grid">
-            <label>Invoice number<span class="req">Automatic</span><input id="invoiceNo" readonly></label>
-            <label>Date<input id="date" type="date"></label>
-          </div>
-
-          <div class="items-head"><h3>Items</h3><button type="button" class="secondary small" id="addItem">+ Add item</button></div>
-          <div id="itemRows"></div>
-          <p class="hint"><span class="gst-only">Prices include GST. </span>Start typing an item name to pick from your product list.</p>
-
-          <h3>Payment</h3>
-          <div class="form-grid">
-            <label class="wide">Finance / EMI<select id="financeCo"></select></label>
-            <label class="fin-only" hidden>Finance amount<span class="req">Paid by finance co.</span><input id="financeAmount" type="number" min="0" step="0.01" inputmode="decimal"></label>
-            <label class="fin-only" hidden>EMI date<span class="req">Every month</span><select id="emiDay"></select></label>
-            <label><span id="modeLabel">Mode</span><select id="paymentMode"></select></label>
-            <label><span id="receivedLabel">Amount received</span><span class="row-inline"><input id="received" type="number" min="0" step="0.01" inputmode="decimal"><button type="button" class="secondary small" id="receivedFull">Full</button></span></label>
-            <label>Reference<span class="req">UPI / card ref.</span><input id="paymentRef" maxlength="60"></label>
-            <label>Balance due<input id="balanceDue" readonly></label>
-            <div class="wide narration-field">
-              <div class="narration-head"><label for="notes">Narration</label><span class="req" id="narrationCount"></span><button type="button" class="secondary small fin-only" id="narrationFill" hidden>Fill from template</button></div>
-              <textarea id="notes" rows="5" maxlength="1000" placeholder="Optional — EMI details, warranty, accessories given…"></textarea>
-            </div>
-          </div>
-
-          <div class="actions">
-            <button type="button" class="secondary" id="newInvoice">New</button>
-            <button type="submit" id="saveInvoice">Save bill</button>
-            <button type="button" class="secondary" id="pdfInvoice">PDF</button>
-            <button type="button" class="secondary" id="printInvoice">Print</button>
-            <button type="button" class="secondary" id="whatsappInvoice">WhatsApp</button>
-          </div>
-          <p id="status" role="status" aria-live="polite"></p>
-        </form>
+      <div class="view-head sale-head no-print">
+        <div class="head-title"><button type="button" class="icon-btn phone-only" data-go="dashboard" aria-label="Back"><span data-icon="back"></span></button><div><h2 id="saleTitle">Sale invoice</h2><p class="sub" id="saleSub"></p></div></div>
+        <div class="seg" id="billingTabs" role="tablist" aria-label="Bill view"><button type="button" role="tab" data-pane="form" aria-selected="true">Details</button><button type="button" role="tab" data-pane="preview" aria-selected="false">Preview</button></div>
       </div>
-      <div class="paper-wrap"><div class="paper-toolbar no-print"><strong>Preview</strong></div><section class="paper" id="invoicePreview" aria-label="Invoice preview"></section></div>
+      <div class="billing-grid" id="billingGrid" data-pane="form">
+        <div class="editor no-print">
+          <div class="edit-banner" id="editBanner" hidden></div>
+          <form id="invoiceForm" novalidate autocomplete="off">
+            <section class="form-card">
+              <div class="card-head"><h3><span data-icon="user" data-size="18"></span>Customer</h3></div>
+              <div class="form-grid">
+                <label class="ac">Name<span class="req">Required</span><input id="customerName" maxlength="100" placeholder="Customer name"><div class="ac-list" hidden></div></label>
+                <label class="ac">Phone<input id="phone" inputmode="tel" maxlength="20" placeholder="10-digit mobile"><div class="ac-list" hidden></div></label>
+              </div>
+              <details class="more-fields" id="customerMore">
+                <summary><span>Address<span class="gst-only">, GSTIN, sale type</span></span></summary>
+                <div class="form-grid">
+                  <label class="wide">Address<textarea id="address" rows="2" maxlength="300" placeholder="Customer address"></textarea></label>
+                  <label class="gst-only">Customer GSTIN<span class="req">Optional (B2B)</span><input id="customerGstin" maxlength="15" placeholder="e.g. 32ABCDE1234F1Z5" style="text-transform:uppercase"></label>
+                  <label class="gst-only">Sale type<select id="supplyType"><option value="intra">Within state (CGST + SGST)</option><option value="inter">Other state (IGST)</option></select></label>
+                  <label class="inter-only" hidden>Customer state<input id="customerState" maxlength="50" placeholder="e.g. TAMIL NADU"></label>
+                  <label class="inter-only" hidden>State code<input id="customerStateCode" maxlength="5" placeholder="e.g. 33"></label>
+                </div>
+              </details>
+            </section>
+
+            <section class="form-card">
+              <div class="form-grid">
+                <label>Invoice no.<span class="req">Automatic</span><input id="invoiceNo" readonly></label>
+                <label>Date<input id="date" type="date"></label>
+              </div>
+            </section>
+
+            <section class="form-card">
+              <div class="card-head"><h3><span data-icon="box" data-size="18"></span>Items</h3><span class="count" id="itemCount"></span></div>
+              <div id="itemRows"></div>
+              <button type="button" class="add-line" id="addItem"><span data-icon="plus" data-size="18"></span>Add item</button>
+              <p class="hint"><span class="gst-only">Prices include GST. </span>Type an item name or scan its barcode to fill it in.</p>
+            </section>
+
+            <section class="form-card">
+              <div class="card-head"><h3><span data-icon="wallet" data-size="18"></span>Payment</h3></div>
+              <div class="form-grid">
+                <label class="wide">Finance / EMI<select id="financeCo"></select></label>
+                <label class="fin-only" hidden>Finance amount<span class="req">Paid by finance co.</span><input id="financeAmount" type="number" min="0" step="0.01" inputmode="decimal"></label>
+                <label class="fin-only" hidden>EMI date<span class="req">Every month</span><select id="emiDay"></select></label>
+                <label><span id="modeLabel">Mode</span><select id="paymentMode"></select></label>
+                <label><span id="receivedLabel">Amount received</span><span class="row-inline"><input id="received" type="number" min="0" step="0.01" inputmode="decimal"><button type="button" class="secondary small" id="receivedFull">Full</button></span></label>
+                <label>Reference<span class="req">UPI / card ref.</span><input id="paymentRef" maxlength="60"></label>
+                <label>Balance due<input id="balanceDue" readonly></label>
+              </div>
+            </section>
+
+            <section class="form-card">
+              <div class="narration-field">
+                <div class="narration-head"><label for="notes"><span data-icon="pen" data-size="18"></span>Narration</label><span class="req" id="narrationCount"></span><button type="button" class="secondary small fin-only" id="narrationFill" hidden>Fill from template</button></div>
+                <textarea id="notes" rows="5" maxlength="1000" placeholder="Optional — EMI details, warranty, accessories given…"></textarea>
+              </div>
+            </section>
+          </form>
+        </div>
+        <div class="paper-wrap"><section class="paper" id="invoicePreview" aria-label="Invoice preview"></section></div>
+      </div>
+
+      <!-- Total + save, always in reach -->
+      <div class="save-bar no-print">
+        <p id="status" role="status" aria-live="polite"></p>
+        <div class="save-row">
+          <div class="save-total"><small>Total</small><strong id="barTotal">₹0.00</strong><small id="barBalance"></small></div>
+          <div class="bill-tools" id="billTools">
+            <button type="button" class="tool" id="newInvoice"><span data-icon="plus" data-size="18"></span><span>New</span></button>
+            <button type="button" class="tool" id="pdfInvoice"><span data-icon="file" data-size="18"></span><span>PDF</span></button>
+            <button type="button" class="tool" id="printInvoice"><span data-icon="printer" data-size="18"></span><span>Print</span></button>
+            <button type="button" class="tool" id="whatsappInvoice"><span data-icon="chat" data-size="18"></span><span>WhatsApp</span></button>
+          </div>
+          <button type="button" class="icon-btn tools-toggle" id="toolsToggle" aria-label="More actions" aria-expanded="false" aria-controls="billTools"><span data-icon="dots"></span></button>
+          <button type="submit" form="invoiceForm" id="saveInvoice">Save bill</button>
+        </div>
+      </div>
     </section>
 
     <!-- BILLS -->
     <section class="view no-print" data-view="bills" hidden>
-      <div class="view-head"><h2>Bills</h2><button type="button" data-go="billing">+ New bill</button></div>
-      <div class="filters">
-        <input id="billSearch" type="search" placeholder="Search number, customer, phone, item, IMEI">
-        <input id="billFrom" type="date" aria-label="From date"><input id="billTo" type="date" aria-label="To date">
-        <select id="billStatus"><option value="">All</option><option value="paid">Paid</option><option value="partial">Part paid</option><option value="due">Due</option><option value="cancelled">Cancelled</option><option value="finance">Financed (EMI)</option></select>
+      <div class="view-head"><div><h2>Sale invoices</h2><p class="sub">All bills of this shop</p></div><button type="button" class="hide-phone" data-go="billing"><span data-icon="plus" data-size="18"></span>New sale</button></div>
+      <div class="toolbar">
+        <label class="search-box"><span data-icon="search" data-size="18"></span><input id="billSearch" type="search" placeholder="Search number, customer, phone, item, IMEI, finance"></label>
+        <div class="date-range"><input id="billFrom" type="date" aria-label="From date"><span>to</span><input id="billTo" type="date" aria-label="To date"></div>
       </div>
-      <p class="hint" id="billSummary"></p>
+      <div class="chips" id="billChips" role="group" aria-label="Show">
+        <button type="button" class="chip active" data-status="">All</button>
+        <button type="button" class="chip" data-status="open">To collect</button>
+        <button type="button" class="chip" data-status="paid">Paid</button>
+        <button type="button" class="chip" data-status="finance">Financed</button>
+        <button type="button" class="chip" data-status="cancelled">Cancelled</button>
+      </div>
+      <select id="billStatus" hidden><option value="">All</option><option value="open">To collect</option><option value="paid">Paid</option><option value="partial">Part paid</option><option value="due">Due</option><option value="cancelled">Cancelled</option><option value="finance">Financed (EMI)</option></select>
+      <div class="summary-strip" id="billSummary"></div>
       <div id="billList"></div>
     </section>
 
     <!-- CUSTOMERS -->
     <section class="view no-print" data-view="customers" hidden>
-      <div class="view-head"><h2>Customers</h2></div>
-      <div class="filters"><input id="customerSearch" type="search" placeholder="Search name or phone"><label class="check"><input type="checkbox" id="customerDuesOnly"> With dues only</label></div>
+      <div class="view-head"><div><h2>Customers</h2><p class="sub" id="customerSummary">Made automatically from your bills</p></div></div>
+      <div class="toolbar">
+        <label class="search-box"><span data-icon="search" data-size="18"></span><input id="customerSearch" type="search" placeholder="Search name or phone"></label>
+        <label class="chip check-chip"><input type="checkbox" id="customerDuesOnly"> To collect only</label>
+      </div>
       <div id="customerList"></div>
     </section>
 
-    <!-- PRODUCTS -->
+    <!-- ITEMS -->
     <section class="view no-print" data-view="products" hidden>
-      <div class="view-head"><h2>Products</h2></div>
-      <form class="panel" id="productForm" novalidate autocomplete="off">
-        <h3 id="productFormTitle">Add product</h3>
-        <div class="product-form-body">
-          <div class="form-grid four">
-            <label class="wide2">Name<input id="pName" maxlength="150" placeholder="e.g. Redmi 13 5G 8+128"></label>
-            <label>Item no. / barcode<span class="req">Auto, or scan</span><input id="pItemNo" maxlength="40" autocapitalize="characters" spellcheck="false"></label>
-            <label class="gst-only">HSN<input id="pHsn" maxlength="20" placeholder="85171300"></label>
-            <label class="second-only">Dealer price code<span class="req">e.g. A, B, ABC</span><input id="pCode" maxlength="20" autocapitalize="characters" style="text-transform:uppercase" spellcheck="false"></label>
-            <label>Price<span class="gst-only">&nbsp;incl. GST</span><input id="pPrice" type="number" min="0" step="0.01" inputmode="decimal"></label>
-            <label class="gst-only">GST<select id="pTax"></select></label>
-            <label>Stock<span class="req">Optional</span><input id="pStock" type="number" step="1" placeholder="Leave blank to not track"></label>
-          </div>
-          <div class="barcode-preview" id="pBarcode" aria-live="polite"></div>
-        </div>
-        <div class="actions"><button type="submit" id="pSave">Save product</button><button type="button" class="secondary" id="pCancel" hidden>Cancel edit</button></div>
-        <p class="form-status" id="productStatus"></p>
-      </form>
-      <div class="filters"><input id="productSearch" type="search" placeholder="Search name or item no. (or scan)"><button type="button" class="secondary" id="printLabels">Print barcode labels</button><button type="button" class="secondary" id="numberAll" hidden></button></div>
-      <p class="hint">Scan an item barcode in a bill's item box (or here in search) to find the product. Labels fit A4 sticker sheets with 24 labels (3 &times; 8, 63.5 &times; 33.9 mm).</p>
+      <div class="view-head"><div><h2>Items</h2><p class="sub" id="productSummary">Phones and accessories you sell</p></div><button type="button" id="addProduct"><span data-icon="plus" data-size="18"></span>Add item</button></div>
+      <div class="toolbar">
+        <label class="search-box"><span data-icon="search" data-size="18"></span><input id="productSearch" type="search" placeholder="Search name or item no. (or scan)"></label>
+        <button type="button" class="secondary" id="printLabels"><span data-icon="barcode" data-size="18"></span>Print labels</button>
+        <button type="button" class="secondary" id="numberAll" hidden></button>
+      </div>
       <div id="productList"></div>
+      <p class="hint">Scan an item's barcode into a bill's item box (or into the search here) to find it. Labels fit A4 sticker sheets with 24 labels (3 &times; 8, 63.5 &times; 33.9 mm).</p>
     </section>
 
     <!-- REPORTS -->
     <section class="view no-print" data-view="reports" hidden>
-      <div class="view-head"><h2>Reports</h2></div>
-      <div class="filters">
-        <input id="repFrom" type="date" aria-label="From date"><input id="repTo" type="date" aria-label="To date">
-        <div class="chips"><button type="button" class="secondary small" data-range="today">Today</button><button type="button" class="secondary small" data-range="month">This month</button><button type="button" class="secondary small" data-range="lastmonth">Last month</button><button type="button" class="secondary small" data-range="fy">This FY</button></div>
+      <div class="view-head"><div><h2>Reports</h2><p class="sub">Sales, GST and payments for any period</p></div></div>
+      <div class="toolbar">
+        <div class="date-range"><input id="repFrom" type="date" aria-label="From date"><span>to</span><input id="repTo" type="date" aria-label="To date"></div>
+        <div class="chips"><button type="button" class="chip" data-range="today">Today</button><button type="button" class="chip" data-range="month">This month</button><button type="button" class="chip" data-range="lastmonth">Last month</button><button type="button" class="chip" data-range="fy">This FY</button></div>
       </div>
       <div class="cards" id="repCards"></div>
-      <div class="two-col">
-        <div class="panel gst-only"><h3>GST by rate</h3><div id="repRates"></div></div>
-        <div class="panel"><h3>Payment modes</h3><div id="repModes"></div></div>
+      <div class="tabs" id="reportTabs" role="tablist" aria-label="Report">
+        <button type="button" role="tab" data-tab="pay" aria-selected="true">Payments &amp; finance</button>
+        <button type="button" role="tab" data-tab="gst" class="gst-only" aria-selected="false">GST &amp; HSN</button>
+        <button type="button" role="tab" data-tab="export" aria-selected="false">Export</button>
       </div>
-      <div class="panel"><h3>Finance (EMI) sales</h3><div id="repFinance"></div></div>
-      <div class="panel gst-only"><h3>HSN summary</h3><div id="repHsn"></div></div>
-      <div class="panel"><h3>Export</h3><div class="backup-row"><button type="button" class="secondary" id="csvBills">Bill-wise CSV</button><button type="button" class="secondary" id="csvItems">Item-wise CSV</button><button type="button" class="secondary gst-only" id="csvHsn">HSN summary CSV</button></div><p class="hint">Open these in Excel or Google Sheets<span class="gst-only">, or give them to your accountant for GSTR-1</span>.</p></div>
+      <div class="tab-panel" data-tab-panel="pay">
+        <div class="two-col">
+          <div class="panel"><h3>Payment modes</h3><div id="repModes"></div></div>
+          <div class="panel"><h3>Finance (EMI) sales</h3><div id="repFinance"></div></div>
+        </div>
+      </div>
+      <div class="tab-panel gst-only" data-tab-panel="gst" hidden>
+        <div class="panel"><h3>GST by rate</h3><div id="repRates"></div></div>
+        <div class="panel"><h3>HSN summary</h3><div id="repHsn"></div></div>
+      </div>
+      <div class="tab-panel" data-tab-panel="export" hidden>
+        <div class="panel"><h3>Download for Excel / your accountant</h3><div class="export-list">
+          <button type="button" class="secondary" id="csvBills"><span data-icon="download" data-size="18"></span>Bill-wise CSV</button>
+          <button type="button" class="secondary" id="csvItems"><span data-icon="download" data-size="18"></span>Item-wise CSV</button>
+          <button type="button" class="secondary gst-only" id="csvHsn"><span data-icon="download" data-size="18"></span>HSN summary CSV</button>
+        </div><p class="hint">For the dates chosen above. Open them in Excel or Google Sheets<span class="gst-only">, or give them to your accountant for GSTR-1</span>.</p></div>
+      </div>
+    </section>
+
+    <!-- MENU (phone) -->
+    <section class="view no-print" data-view="menu" hidden>
+      <div class="view-head"><div><h2>Menu</h2></div></div>
+      <div class="menu-group"><h4>Business</h4>
+        <button type="button" data-go="customers"><span class="q-ic q-violet" data-icon="users"></span><span>Customers<small>Dues and bills of each customer</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-go="reports"><span class="q-ic q-amber" data-icon="chart"></span><span>Reports<small>Sales, GST, HSN, finance, Excel export</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-quick="labels"><span class="q-ic q-slate" data-icon="barcode"></span><span>Print barcode labels<small>A4 sticker sheets</small></span><span data-icon="chevron" data-size="18"></span></button>
+      </div>
+      <div class="menu-group"><h4>Settings</h4>
+        <button type="button" data-settings="business"><span class="q-ic q-teal" data-icon="building"></span><span>Business &amp; invoice<small>Name, GSTIN, address, invoice numbers</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="finance"><span class="q-ic q-blue" data-icon="card"></span><span>Finance companies<small>DMI, Chola, Bajaj, Axio and narration text</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="sync"><span class="q-ic q-green" data-icon="cloud"></span><span>Sign-in, sync &amp; staff<small>Devices and staff accounts</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="second"><span class="q-ic q-violet" data-icon="store"></span><span>Second shop<small>Billing without GST</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="signature"><span class="q-ic q-slate" data-icon="pen"></span><span>Signature<small>Printed on bills</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="backup"><span class="q-ic q-amber" data-icon="archive"></span><span>Backup &amp; restore<small>Save all bills to a file</small></span><span data-icon="chevron" data-size="18"></span></button>
+        <button type="button" data-settings="app"><span class="q-ic q-red" data-icon="refresh"></span><span>App version &amp; updates<small id="menuVersion"></small></span><span data-icon="chevron" data-size="18"></span></button>
+      </div>
     </section>
 
     <!-- SETTINGS -->
-    <section class="view no-print" data-view="settings" hidden>
-      <div class="view-head"><h2>Settings</h2></div>
-      <div class="panel" id="cloudPanel"></div>
-      <form class="panel" id="businessForm" novalidate>
-        <h3>Business details: main shop (GST)</h3>
-        <div class="form-grid">
-          <label>Business name<input id="businessName" maxlength="100"></label>
-          <label>GSTIN<input id="gstin" maxlength="30"></label>
-          <label class="wide">Address<input id="businessAddress" maxlength="300"></label>
-          <label>Phone<input id="businessPhone" maxlength="80"></label>
-          <label>Email<input id="businessEmail" maxlength="120"></label>
-          <label>State<input id="state" maxlength="50"></label>
-          <label>State code<input id="stateCode" maxlength="10"></label>
-          <label class="wide">Bank / UPI details on bill<input id="bankDetails" maxlength="400" placeholder="Optional — e.g. UPI: mmmobiles@okaxis"></label>
-          <label class="wide">Terms on bill<textarea id="terms" rows="2" maxlength="400"></textarea></label>
+    <section class="view no-print settings" data-view="settings" hidden>
+      <div class="view-head"><div class="head-title"><button type="button" class="icon-btn phone-only" id="settingsBack" aria-label="Back"><span data-icon="back"></span></button><div><h2 id="settingsTitle">Settings</h2></div></div></div>
+      <div class="settings-layout" id="settingsLayout" data-section="sync">
+        <div class="settings-menu" id="settingsMenu">
+          <button type="button" data-section="business"><span data-icon="building"></span>Business &amp; invoice</button>
+          <button type="button" data-section="finance"><span data-icon="card"></span>Finance companies</button>
+          <button type="button" data-section="sync"><span data-icon="cloud"></span>Sign-in, sync &amp; staff</button>
+          <button type="button" data-section="second"><span data-icon="store"></span>Second shop</button>
+          <button type="button" data-section="signature"><span data-icon="pen"></span>Signature</button>
+          <button type="button" data-section="backup"><span data-icon="archive"></span>Backup &amp; restore</button>
+          <button type="button" data-section="app"><span data-icon="refresh"></span>App version</button>
         </div>
-        <h3>Invoice numbers</h3>
-        <div class="form-grid">
-          <label>Prefix<input id="invoicePrefix" maxlength="20"></label>
-          <label>Start from<input id="invoiceStart" type="number" min="1" step="1"></label>
-          <label>Digits<input id="invoiceDigits" type="number" min="1" max="9" step="1"></label>
-          <label class="check"><input id="roundUp" type="checkbox"> Round grand total to nearest rupee</label>
-        </div>
-        <p class="hint" id="numberExample"></p>
-        <div class="actions"><button type="submit">Save settings</button></div>
-        <p class="form-status" id="settingsStatus"></p>
-      </form>
-      <form class="panel" id="secondShopForm" novalidate>
-        <h3>Second shop (no GST)</h3>
-        <label class="check"><input id="s2Enabled" type="checkbox"> Use a second shop that bills without GST</label>
-        <div id="s2Fields">
-          <div class="form-grid">
-            <label>Shop name<input id="s2Name" maxlength="100"></label>
-            <label>Phone<input id="s2Phone" maxlength="120"></label>
-            <label class="wide">Address<input id="s2Address" maxlength="400"></label>
-            <label>Email<input id="s2Email" maxlength="120"></label>
-            <label class="wide">Bank / UPI details on bill<input id="s2Bank" maxlength="400" placeholder="Optional"></label>
-            <label class="wide">Terms on bill<textarea id="s2Terms" rows="2" maxlength="400"></textarea></label>
-            <label>Invoice prefix<input id="s2Prefix" maxlength="20"></label>
-            <label>Start from<input id="s2Start" type="number" min="1" step="1"></label>
-            <label>Digits<input id="s2Digits" type="number" min="1" max="9" step="1"></label>
+        <div class="settings-pages">
+          <div class="panel settings-page" data-section="sync" id="cloudPanel"></div>
+          <form class="panel settings-page" data-section="business" id="businessForm" novalidate>
+            <h3>Business details: main shop (GST)</h3>
+            <div class="form-grid">
+              <label>Business name<input id="businessName" maxlength="100"></label>
+              <label>GSTIN<input id="gstin" maxlength="30"></label>
+              <label class="wide">Address<input id="businessAddress" maxlength="300"></label>
+              <label>Phone<input id="businessPhone" maxlength="80"></label>
+              <label>Email<input id="businessEmail" maxlength="120"></label>
+              <label>State<input id="state" maxlength="50"></label>
+              <label>State code<input id="stateCode" maxlength="10"></label>
+              <label class="wide">Bank / UPI details on bill<input id="bankDetails" maxlength="400" placeholder="Optional — e.g. UPI: mmmobiles@okaxis"></label>
+              <label class="wide">Terms on bill<textarea id="terms" rows="2" maxlength="400"></textarea></label>
+            </div>
+            <h3>Invoice numbers</h3>
+            <div class="form-grid">
+              <label>Prefix<input id="invoicePrefix" maxlength="20"></label>
+              <label>Start from<input id="invoiceStart" type="number" min="1" step="1"></label>
+              <label>Digits<input id="invoiceDigits" type="number" min="1" max="9" step="1"></label>
+              <label class="check"><input id="roundUp" type="checkbox"> Round grand total to nearest rupee</label>
+            </div>
+            <p class="hint" id="numberExample"></p>
+            <div class="actions"><button type="submit">Save settings</button></div>
+            <p class="form-status" id="settingsStatus"></p>
+          </form>
+          <form class="panel settings-page" data-section="finance" id="financeForm" novalidate>
+            <h3>Finance companies (EMI)</h3>
+            <p class="hint">Choose one on a bill under Payment → Finance / EMI. Its narration template is written into the bill's narration with the bill's figures filled in. You can use <code>{finance}</code> <code>{emiDay}</code> <code>{downPayment}</code> <code>{financeAmount}</code> <code>{total}</code> <code>{customer}</code>, and <code>______</code> for details to write on each bill (loan no., EMI amount).</p>
+            <div class="finance-list" id="financeList"></div>
+            <div class="actions"><button type="button" class="secondary" id="financeAdd">+ Add finance company</button><button type="submit">Save finance companies</button></div>
+            <p class="form-status" id="financeStatus"></p>
+          </form>
+          <form class="panel settings-page" data-section="second" id="secondShopForm" novalidate>
+            <h3>Second shop (no GST)</h3>
+            <label class="check"><input id="s2Enabled" type="checkbox"> Use a second shop that bills without GST</label>
+            <div id="s2Fields">
+              <div class="form-grid">
+                <label>Shop name<input id="s2Name" maxlength="100"></label>
+                <label>Phone<input id="s2Phone" maxlength="120"></label>
+                <label class="wide">Address<input id="s2Address" maxlength="400"></label>
+                <label>Email<input id="s2Email" maxlength="120"></label>
+                <label class="wide">Bank / UPI details on bill<input id="s2Bank" maxlength="400" placeholder="Optional"></label>
+                <label class="wide">Terms on bill<textarea id="s2Terms" rows="2" maxlength="400"></textarea></label>
+                <label>Invoice prefix<input id="s2Prefix" maxlength="20"></label>
+                <label>Start from<input id="s2Start" type="number" min="1" step="1"></label>
+                <label>Digits<input id="s2Digits" type="number" min="1" max="9" step="1"></label>
+              </div>
+              <p class="hint" id="s2NumberExample"></p>
+            </div>
+            <p class="hint">Bills for this shop have no GSTIN, HSN or GST, are numbered separately, and sync with the main shop. Switch shops by tapping the shop name at the top left. The signature is used for both shops.</p>
+            <div class="actions"><button type="submit">Save second shop</button></div>
+            <p class="form-status" id="s2Status"></p>
+          </form>
+          <div class="panel settings-page" data-section="signature">
+            <h3>Signature on bill</h3>
+            <div class="signature-box" id="signaturePreview"></div>
+            <div class="backup-row"><button type="button" class="secondary" id="uploadSignature">Upload signature</button><button type="button" class="secondary" id="removeSignature" hidden>Remove signature</button><input type="file" id="signatureFile" accept="image/png,image/jpeg,image/webp" hidden></div>
+            <p class="hint">Use a PNG with a transparent background. A photo of a signature on plain white paper also works: the white is removed automatically. The signature is printed above "Authorised Signatory" on every bill, print-out and PDF.</p>
+            <p class="form-status" id="signatureStatus"></p>
           </div>
-          <p class="hint" id="s2NumberExample"></p>
+          <div class="panel settings-page" data-section="backup">
+            <h3>Backup &amp; restore</h3>
+            <div class="backup-row"><button type="button" class="secondary" id="exportBackup">Export backup</button><button type="button" class="secondary" id="importBackup">Restore from backup</button><input type="file" id="restoreFile" accept="application/json,.json" hidden></div>
+            <p class="hint">Restoring replaces every bill, product and setting in the place you're currently saving to (this device, or your synced shop when signed in).</p>
+            <p class="form-status" id="backupStatus"></p>
+          </div>
+          <div class="panel settings-page" data-section="app" id="appPanel">
+            <h3>App version</h3>
+            <p>Version <strong id="appVersion"></strong></p>
+            <div class="actions" id="appActions"></div>
+            <p class="hint" id="appHint"></p>
+            <p class="form-status" id="updateStatus" role="status" aria-live="polite"></p>
+          </div>
         </div>
-        <p class="hint">Bills for this shop have no GSTIN, HSN or GST, are numbered separately, and sync with the main shop. Switch shops by tapping the shop name at the top left. The signature below is used for both shops.</p>
-        <div class="actions"><button type="submit">Save second shop</button></div>
-        <p class="form-status" id="s2Status"></p>
-      </form>
-      <form class="panel" id="financeForm" novalidate>
-        <h3>Finance companies (EMI)</h3>
-        <p class="hint">Choose one on a bill under Payment → Finance / EMI. Its narration template is written into the bill's narration with the bill's figures filled in. You can use <code>{finance}</code> <code>{emiDay}</code> <code>{downPayment}</code> <code>{financeAmount}</code> <code>{total}</code> <code>{customer}</code>, and <code>______</code> for details to write on each bill (loan no., EMI amount).</p>
-        <div class="finance-list" id="financeList"></div>
-        <div class="actions"><button type="button" class="secondary" id="financeAdd">+ Add finance company</button><button type="submit">Save finance companies</button></div>
-        <p class="form-status" id="financeStatus"></p>
-      </form>
-      <div class="panel">
-        <h3>Signature on bill</h3>
-        <div class="signature-box" id="signaturePreview"></div>
-        <div class="backup-row"><button type="button" class="secondary" id="uploadSignature">Upload signature</button><button type="button" class="secondary" id="removeSignature" hidden>Remove signature</button><input type="file" id="signatureFile" accept="image/png,image/jpeg,image/webp" hidden></div>
-        <p class="hint">Use a PNG with a transparent background. A photo of a signature on plain white paper also works: the white is removed automatically. The signature is printed above "Authorised Signatory" on every bill, print-out and PDF.</p>
-        <p class="form-status" id="signatureStatus"></p>
-      </div>
-      <div class="panel">
-        <h3>Backup &amp; restore</h3>
-        <div class="backup-row"><button type="button" class="secondary" id="exportBackup">Export backup</button><button type="button" class="secondary" id="importBackup">Restore from backup</button><input type="file" id="restoreFile" accept="application/json,.json" hidden></div>
-        <p class="hint">Restoring replaces every bill, product and setting in the place you're currently saving to (this device, or your synced shop when signed in).</p>
-        <p class="form-status" id="backupStatus"></p>
-      </div>
-      <div class="panel" id="appPanel">
-        <h3>App version</h3>
-        <p>Version <strong id="appVersion"></strong></p>
-        <div class="actions" id="appActions"></div>
-        <p class="hint" id="appHint"></p>
-        <p class="form-status" id="updateStatus" role="status" aria-live="polite"></p>
       </div>
     </section>
   </main>
+</div>
+
+  <!-- Add / edit item -->
+  <dialog id="productDialog" class="sheet" aria-labelledby="productFormTitle">
+    <form id="productForm" novalidate autocomplete="off">
+      <div class="sheet-head"><h3 id="productFormTitle">Add item</h3><button type="button" class="icon-btn" id="pClose" aria-label="Close"><span data-icon="close"></span></button></div>
+      <div class="sheet-body">
+        <div class="form-grid">
+          <label class="wide">Name<input id="pName" maxlength="150" placeholder="e.g. Redmi 13 5G 8+128"></label>
+          <label>Item no. / barcode<span class="req">Auto, or scan</span><input id="pItemNo" maxlength="40" autocapitalize="characters" spellcheck="false"></label>
+          <label><span>Price<span class="gst-only"> incl. GST</span></span><input id="pPrice" type="number" min="0" step="0.01" inputmode="decimal"></label>
+          <label class="gst-only">HSN<input id="pHsn" maxlength="20" placeholder="85171300"></label>
+          <label class="gst-only">GST<select id="pTax"></select></label>
+          <label class="second-only">Dealer price code<span class="req">e.g. A, B, ABC</span><input id="pCode" maxlength="20" autocapitalize="characters" style="text-transform:uppercase" spellcheck="false"></label>
+          <label>Stock<span class="req">Optional</span><input id="pStock" type="number" step="1" placeholder="Leave blank to not track"></label>
+        </div>
+        <div class="barcode-preview" id="pBarcode" aria-live="polite"></div>
+        <p class="form-status" id="productStatus"></p>
+      </div>
+      <div class="sheet-foot"><button type="button" class="danger" id="pDelete" hidden>Delete</button><span class="spacer"></span><button type="button" class="secondary" id="pCancel">Cancel</button><button type="submit" id="pSave">Save item</button></div>
+    </form>
+  </dialog>
 
   <dialog id="dialog"><form method="dialog" id="dialogBody"></form></dialog>
   <div id="toast" role="status" aria-live="polite" hidden></div>
