@@ -105,7 +105,9 @@ Secrets are never shown again or printed in the build logs. Never commit the key
 4. In about 5–10 minutes the **Release APK** job (Actions tab) attaches `MM-GST-Billing-v2.2.0.apk` to the release. The job's summary shows the APK's signing key: its SHA-1 must be `ee6a7ebb3f78a498038e9fabd973d51380082824`.
 5. Phones see the update the next time the app is opened (or Settings → App version → *Check for updates*).
 
-The version comes from the tag: `v2.3.1` becomes version 2.3.1 (Android version code 20301). Each release needs a higher number than the last. The app only offers a release once its APK is attached, so publishing before the build finishes is fine. To rebuild the APK of an existing release, run the **Release APK** workflow by hand (Actions → Release APK → Run workflow) with its tag.
+**Or let the workflow make the release:** Actions → **Release APK** → **Run workflow** (branch `main`), enter the tag (e.g. `v2.2.0`) and what's new. It builds the APK first, then creates the release with the APK already attached.
+
+The version comes from the tag: `v2.3.1` becomes version 2.3.1 (Android version code 20301). Each release needs a higher number than the last. The app only offers a release once its APK is attached, so publishing before the build finishes is fine. To rebuild the APK of an existing release, run the **Release APK** workflow with that release's tag.
 
 **Version 2.1.0 → 2.2.0 is a manual update**, because 2.1.0 doesn't have the update check yet: on each phone, open the release page in the browser, download `MM-GST-Billing-v2.2.0.apk`, open it and tap **Update**. From 2.2.0 on, the app offers updates itself. The first time, Android may ask to allow *MM GST Invoice* to install apps: allow it, go back, and tap Update.
 
