@@ -31,6 +31,7 @@
   </nav>
 
   <main>
+    <div class="update-banner no-print" id="updateBanner" role="status" hidden></div>
     <!-- DASHBOARD -->
     <section class="view no-print" data-view="dashboard">
       <div class="view-head"><h2>Today at a glance</h2><button type="button" data-go="billing">+ New bill</button></div>
@@ -70,11 +71,17 @@
 
           <h3>Payment</h3>
           <div class="form-grid">
-            <label>Mode<select id="paymentMode"></select></label>
-            <label>Amount received<span class="row-inline"><input id="received" type="number" min="0" step="0.01" inputmode="decimal"><button type="button" class="secondary small" id="receivedFull">Full</button></span></label>
+            <label class="wide">Finance / EMI<select id="financeCo"></select></label>
+            <label class="fin-only" hidden>Finance amount<span class="req">Paid by finance co.</span><input id="financeAmount" type="number" min="0" step="0.01" inputmode="decimal"></label>
+            <label class="fin-only" hidden>EMI date<span class="req">Every month</span><select id="emiDay"></select></label>
+            <label><span id="modeLabel">Mode</span><select id="paymentMode"></select></label>
+            <label><span id="receivedLabel">Amount received</span><span class="row-inline"><input id="received" type="number" min="0" step="0.01" inputmode="decimal"><button type="button" class="secondary small" id="receivedFull">Full</button></span></label>
             <label>Reference<span class="req">UPI / card ref.</span><input id="paymentRef" maxlength="60"></label>
             <label>Balance due<input id="balanceDue" readonly></label>
-            <label class="wide">Notes on bill<input id="notes" maxlength="500" placeholder="Optional — e.g. warranty, accessories given"></label>
+            <div class="wide narration-field">
+              <div class="narration-head"><label for="notes">Narration</label><span class="req" id="narrationCount"></span><button type="button" class="secondary small fin-only" id="narrationFill" hidden>Fill from template</button></div>
+              <textarea id="notes" rows="5" maxlength="1000" placeholder="Optional — EMI details, warranty, accessories given…"></textarea>
+            </div>
           </div>
 
           <div class="actions">
@@ -96,7 +103,7 @@
       <div class="filters">
         <input id="billSearch" type="search" placeholder="Search number, customer, phone, item, IMEI">
         <input id="billFrom" type="date" aria-label="From date"><input id="billTo" type="date" aria-label="To date">
-        <select id="billStatus"><option value="">All</option><option value="paid">Paid</option><option value="partial">Part paid</option><option value="due">Due</option><option value="cancelled">Cancelled</option></select>
+        <select id="billStatus"><option value="">All</option><option value="paid">Paid</option><option value="partial">Part paid</option><option value="due">Due</option><option value="cancelled">Cancelled</option><option value="finance">Financed (EMI)</option></select>
       </div>
       <p class="hint" id="billSummary"></p>
       <div id="billList"></div>
@@ -146,6 +153,7 @@
         <div class="panel gst-only"><h3>GST by rate</h3><div id="repRates"></div></div>
         <div class="panel"><h3>Payment modes</h3><div id="repModes"></div></div>
       </div>
+      <div class="panel"><h3>Finance (EMI) sales</h3><div id="repFinance"></div></div>
       <div class="panel gst-only"><h3>HSN summary</h3><div id="repHsn"></div></div>
       <div class="panel"><h3>Export</h3><div class="backup-row"><button type="button" class="secondary" id="csvBills">Bill-wise CSV</button><button type="button" class="secondary" id="csvItems">Item-wise CSV</button><button type="button" class="secondary gst-only" id="csvHsn">HSN summary CSV</button></div><p class="hint">Open these in Excel or Google Sheets<span class="gst-only">, or give them to your accountant for GSTR-1</span>.</p></div>
     </section>
@@ -199,6 +207,13 @@
         <div class="actions"><button type="submit">Save second shop</button></div>
         <p class="form-status" id="s2Status"></p>
       </form>
+      <form class="panel" id="financeForm" novalidate>
+        <h3>Finance companies (EMI)</h3>
+        <p class="hint">Choose one on a bill under Payment → Finance / EMI. Its narration template is written into the bill's narration with the bill's figures filled in. You can use <code>{finance}</code> <code>{emiDay}</code> <code>{downPayment}</code> <code>{financeAmount}</code> <code>{total}</code> <code>{customer}</code>, and <code>______</code> for details to write on each bill (loan no., EMI amount).</p>
+        <div class="finance-list" id="financeList"></div>
+        <div class="actions"><button type="button" class="secondary" id="financeAdd">+ Add finance company</button><button type="submit">Save finance companies</button></div>
+        <p class="form-status" id="financeStatus"></p>
+      </form>
       <div class="panel">
         <h3>Signature on bill</h3>
         <div class="signature-box" id="signaturePreview"></div>
@@ -211,6 +226,13 @@
         <div class="backup-row"><button type="button" class="secondary" id="exportBackup">Export backup</button><button type="button" class="secondary" id="importBackup">Restore from backup</button><input type="file" id="restoreFile" accept="application/json,.json" hidden></div>
         <p class="hint">Restoring replaces every bill, product and setting in the place you're currently saving to (this device, or your synced shop when signed in).</p>
         <p class="form-status" id="backupStatus"></p>
+      </div>
+      <div class="panel" id="appPanel">
+        <h3>App version</h3>
+        <p>Version <strong id="appVersion"></strong></p>
+        <div class="actions" id="appActions"></div>
+        <p class="hint" id="appHint"></p>
+        <p class="form-status" id="updateStatus" role="status" aria-live="polite"></p>
       </div>
     </section>
   </main>

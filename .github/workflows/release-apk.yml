@@ -1,0 +1,125 @@
+# Builds the signed Android APK for every published GitHub release and attaches it to the release as
+# MM-GST-Billing-vX.Y.Z.apk. The app on the phones checks the latest release and offers the update.
+#
+# To release:  GitHub → Releases → Draft a new release → tag v2.2.0 (new tag on main) → write what's new → Publish.
+# The APK appears on the release about 5–10 minutes later (watch it under the Actions tab).
+#
+# Needs these repository secrets (Settings → Secrets and variables → Actions). See README → "Releasing an update".
+#   ANDROID_KEYSTORE_BASE64    the signing keystore file, base64-encoded
+#   ANDROID_KEYSTORE_PASSWORD  its password
+#   ANDROID_KEY_ALIAS          the key alias inside it
+#   ANDROID_KEY_PASSWORD       the key's password
+name: Release APK
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of an existing release to (re)build the APK for, e.g. v2.2.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-apk-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Read the version from the tag
+        run: |
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::The release tag must look like v2.2.0 (got '$TAG'). Edit the release and use a tag like that."
+            exit 1
+          fi
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+          if (( minor > 99 || patch > 99 )); then echo "::error::The middle and last numbers of the version must be below 100."; exit 1; fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$(( major * 10000 + minor * 100 + patch ))" >> "$GITHUB_ENV"
+
+      - name: Check the signing secrets are set
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$KEYSTORE_BASE64" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing ANDROID_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing ANDROID_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Add these repository secrets first (see README → Releasing an update):$missing"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Set the app version to ${{ env.VERSION }}
+        run: |
+          sed -i -E "s/versionCode [0-9]+/versionCode $VERSION_CODE/; s/versionName \"[^\"]*\"/versionName \"$VERSION\"/" android/app/build.gradle
+          sed -i -E "s/APP_VERSION = '[^']*'/APP_VERSION = '$VERSION'/" public/js/version.js
+          grep -q "versionCode $VERSION_CODE" android/app/build.gradle
+          grep -q "versionName \"$VERSION\"" android/app/build.gradle
+          grep -q "APP_VERSION = '$VERSION'" public/js/version.js
+
+      - name: Copy the web app into the Android project
+        run: npx cap sync android
+
+      - name: Build the signed APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          MM_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MM_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MM_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export MM_KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$MM_KEYSTORE_FILE"
+          cd android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          rm -f "$MM_KEYSTORE_FILE"
+
+      - name: Check the signature
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "$apk" | tee signature.txt
+          echo "### Signing key of this APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "It must match the key of the app already on the phones, and its SHA-1 must be registered in Firebase for Google sign-in." >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; grep -i "SHA-1\|SHA-256\|DN:" signature.txt >> "$GITHUB_STEP_SUMMARY" || true; echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach the APK to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "MM-GST-Billing-$TAG.apk"
+          gh release upload "$TAG" "MM-GST-Billing-$TAG.apk" --clobber --repo "$GITHUB_REPOSITORY"

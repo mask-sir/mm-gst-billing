@@ -8,6 +8,9 @@ Sign in with Google to keep bills in sync live on up to **3 devices** (phones an
 - **Billing**: GST-inclusive prices, several items per bill, IMEI/serial per item, per-item discount, 0/3/5/12/18/28 % GST
 - **CGST + SGST or IGST**: choose "Other state" for inter-state sales; customer GSTIN for B2B bills
 - **Payments**: cash / UPI / card / bank / credit. Part payments, balance due, and "Receive payment" later
+- **Finance (EMI) sales**: under Payment → *Finance / EMI*, pick the finance company (DMI Finance, Chola, Bajaj Finance, Axio — change the list in Settings → Finance companies). Enter the customer's **down payment**; the rest is the **finance amount**, paid by the finance company and counted as received, so the bill isn't shown as due. Pick the **EMI date** (e.g. 3rd of every month). The bill shows "Down payment" and "Finance (DMI Finance)" under the total, bills get a finance badge, the bill list has a *Financed (EMI)* filter, and Reports show totals per finance company. Update every phone and computer to 2.2.0 before using it: older versions don't know about finance and drop the finance details if they edit a financed bill
+- **Narration**: a multi-line box on every bill for EMI details and anything else (printed in a box on the bill, the PDF and the WhatsApp message). Choosing a finance company fills it from that company's template, e.g. *"Please keep the EMI amount in your bank account before the 3rd of every month."* with blanks (`______`) for the loan number and EMI amount. Edit the templates in Settings → Finance companies; they can use `{finance}` `{emiDay}` `{downPayment}` `{financeAmount}` `{total}` `{customer}`
+- **App updates**: the Android app checks GitHub for a new version each time it opens, shows *"A new version of the app is ready"*, then downloads it and opens Android's installer (see [Releasing an update](#releasing-an-update))
 - **Automatic invoice numbers** per financial year (e.g. `MMM-26-27/00001`). Never duplicated, even when two devices save at the same moment
 - **PDF, print and WhatsApp**: A4 tax-invoice PDF, print view, and a WhatsApp message with the bill summary
 - **Second shop without GST** (e.g. MAX MOBILES): switch it on in Settings → Second shop. Switch shops by tapping the shop name at the top left. Each shop has its own bills, customers, products, reports and invoice numbers (e.g. `MAX-26-27/00001`). Second-shop bills have no GSTIN, HSN or GST. Second-shop products have a **dealer price code** (A, B, ABC…), a short code for the dealer price. It shows in the product list, billing suggestions and labels, and never on bills.
@@ -70,6 +73,42 @@ Sync uses Google Firebase. The free "Spark" plan is plenty for a shop.
 - **Existing bills**: the first time you sign in on a device that already has bills, the app offers to copy them into the synced shop. Duplicates are skipped.
 - While signed out, the app works exactly as before and saves bills only on that device.
 
+## Releasing an update
+
+New versions reach the phones through **GitHub releases**. When a release is published, GitHub Actions builds and signs the APK and attaches it to the release (`.github/workflows/release-apk.yml`). The Android app checks the latest release whenever it opens and offers the update. Android always shows its own "Do you want to update this app?" screen, so someone taps **Update** on each phone.
+
+### One-time setup: give GitHub the signing key
+
+Android only installs an update over the app already on a phone if it is signed with **the same key**. The app on the phones (version 2.1.0) was built on the shop PC and signed with that PC's Android *debug* key (SHA-1 `EE:6A:7E:BB:3F:78:A4:98:03:8E:9F:AB:D9:73:D5:13:80:08:28:24`, the one registered in Firebase for Google sign-in). GitHub needs a copy of that key file:
+
+1. On the shop PC, the key is `C:\Users\onlys\.android\debug.keystore`. Back it up somewhere safe: if it is lost, updates can't install over the app any more.
+2. Open **PowerShell** and copy the file as text to the clipboard:
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) | Set-Clipboard
+   ```
+3. On GitHub, open this repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**, and add these four (the debug key always uses these passwords):
+
+   | Name | Value |
+   | --- | --- |
+   | `ANDROID_KEYSTORE_BASE64` | paste from the clipboard |
+   | `ANDROID_KEYSTORE_PASSWORD` | `android` |
+   | `ANDROID_KEY_ALIAS` | `androiddebugkey` |
+   | `ANDROID_KEY_PASSWORD` | `android` |
+
+Secrets are never shown again or printed in the build logs. Never commit the keystore file itself (`.gitignore` blocks `*.keystore` and `*.jks`).
+
+### Each release
+
+1. Merge the changes into `main`.
+2. GitHub → **Releases** → **Draft a new release** → **Choose a tag** → type the new version, e.g. `v2.2.0` → *Create new tag on publish* (target `main`).
+3. Write what's new in the description (the app shows it in the update screen), then **Publish release**.
+4. In about 5–10 minutes the **Release APK** job (Actions tab) attaches `MM-GST-Billing-v2.2.0.apk` to the release. The job's summary shows the APK's signing key: its SHA-1 must be `ee6a7ebb3f78a498038e9fabd973d51380082824`.
+5. Phones see the update the next time the app is opened (or Settings → App version → *Check for updates*).
+
+The version comes from the tag: `v2.3.1` becomes version 2.3.1 (Android version code 20301). Each release needs a higher number than the last. The app only offers a release once its APK is attached, so publishing before the build finishes is fine. To rebuild the APK of an existing release, run the **Release APK** workflow by hand (Actions → Release APK → Run workflow) with its tag.
+
+**Version 2.1.0 → 2.2.0 is a manual update**, because 2.1.0 doesn't have the update check yet: on each phone, open the release page in the browser, download `MM-GST-Billing-v2.2.0.apk`, open it and tap **Update**. From 2.2.0 on, the app offers updates itself. The first time, Android may ask to allow *MM GST Invoice* to install apps: allow it, go back, and tap Update.
+
 ## Android app
 
 The Android project (`android/`) is generated by Capacitor (app ID `com.mmmobiles.gst`, the same as earlier versions, so the new app installs over the old one and keeps its bills).
@@ -109,5 +148,9 @@ Then add `emulators: { host: '127.0.0.1' }` to the config object in `public/fire
 | `public/js/pdf.js` | Invoice PDF (no library, works offline) |
 | `public/js/store-local.js` | Saving on this device (server `data/`, Android storage, or browser storage) |
 | `public/js/cloud.js` | Google sign-in, Firestore sync, device slots, staff |
+| `public/js/update.js`, `public/js/version.js` | App version, update check against GitHub releases, APK download + install |
+| `.github/workflows/release-apk.yml` | Builds, signs and attaches the APK when a release is published |
+| `.github/workflows/check.yml` | Runs the tests and builds the Android app on every pull request |
+| `test/` | Tests (`npm test`) |
 | `firestore.rules` | Cloud security rules (shop access, 3-device limit) |
 | `server.js` | Local server for `npm start` |

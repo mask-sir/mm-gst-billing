@@ -26,6 +26,83 @@ export function profileSettings(settings, profile) {
 }
 export function counterKey(profile, year) { return profile === 'second' ? `second:${year}` : year; }
 
+/* ---------- Finance (EMI) sales. A bill can be financed by one of the shop's finance companies: the customer pays a
+   down payment, and the finance company pays the rest (the "finance amount"), which counts as received.
+   Each company has a default EMI day and a narration template. Templates can use these placeholders:
+   {finance} {emiDay} {downPayment} {financeAmount} {total} {customer}. "______" marks blanks to fill in on the bill. ---------- */
+export const FINANCE_TEMPLATE = [
+  'Financed by {finance}.',
+  'Loan / agreement no: ______',
+  'EMI: ₹______ x ______ months',
+  'Please keep the EMI amount in your bank account before the {emiDay} of every month.'
+].join('\n');
+export const FINANCE_DEFAULTS = [
+  { id: 'dmi', name: 'DMI Finance', emiDay: 3, template: FINANCE_TEMPLATE },
+  { id: 'chola', name: 'Chola', emiDay: 3, template: FINANCE_TEMPLATE },
+  { id: 'bajaj', name: 'Bajaj Finance', emiDay: 3, template: FINANCE_TEMPLATE },
+  { id: 'axio', name: 'Axio', emiDay: 3, template: FINANCE_TEMPLATE }
+];
+export const MAX_FINANCES = 12;
+export const NARRATION_MAX = 1000;
+const emiDayOf = v => Math.min(31, Math.max(1, Math.floor(Number(v)) || 3));
+export function ordinal(n) {
+  const v = Math.floor(Number(n) || 0), t = v % 100;
+  return `${v}${t >= 11 && t <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th'}`;
+}
+// Settings list of finance companies. Settings saved before finance existed get the four defaults.
+export function cleanFinances(raw) {
+  if (!Array.isArray(raw)) return FINANCE_DEFAULTS.map(f => ({ ...f }));
+  const seen = new Set();
+  return raw.slice(0, MAX_FINANCES).map(f => {
+    const name = cleanText(f?.name, 40);
+    if (!name) return null;
+    let id = cleanText(f?.id, 20).replace(/[^\w-]/g, '') || `fin_${uid().slice(0, 8)}`;
+    while (seen.has(id)) id = `fin_${uid().slice(0, 8)}`;
+    seen.add(id);
+    return { id, name, emiDay: emiDayOf(f?.emiDay), template: cleanText(f?.template, NARRATION_MAX) };
+  }).filter(Boolean);
+}
+// Finance details stored on a bill (a copy, so renaming a company later doesn't change old bills).
+export function cleanFinance(raw) {
+  const name = cleanText(raw?.name, 40);
+  if (!raw || typeof raw !== 'object' || !name) return null;
+  return { id: cleanText(raw.id, 20), name, amount: Math.max(0, Math.round((Number(raw.amount) || 0) * 100) / 100), emiDay: emiDayOf(raw.emiDay) };
+}
+// Amount for narration text: "16,000" or "16,000.50".
+export function amountText(value) {
+  const n = Math.round((Number(value) || 0) * 100) / 100;
+  return n.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+}
+// The values a narration template's placeholders stand for, for this bill.
+export function financeValues(invoice) {
+  const t = calcInvoice(invoice), f = invoice.finance || {};
+  return { finance: f.name || '', emiDay: ordinal(f.emiDay || 3), downPayment: amountText(t.downPayment), financeAmount: amountText(t.financeAmount), total: amountText(t.grandTotal), customer: invoice.customer?.name || '' };
+}
+// Narration for a financed bill: the company's template with the bill's figures filled in.
+export function financeNarration(template, invoice) {
+  const values = financeValues(invoice);
+  return String(template || '').replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m)).trim();
+}
+// After the narration has been edited by hand, a changed figure (EMI date, amounts) is still swapped in where the
+// old figure appears exactly once, so the narration never shows an old EMI date or amount.
+export function swapFigures(text, before, after) {
+  const keys = ['emiDay', 'downPayment', 'financeAmount', 'total'].filter(k => before?.[k] && after?.[k] && before[k] !== after[k]);
+  const swaps = new Map();
+  for (const k of keys) {
+    const old = before[k], re = new RegExp(`(?<![\\d.,])${old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\d|[.,]\\d)`, 'g');
+    if ((text.match(re) || []).length === 1 && !swaps.has(old)) swaps.set(old, after[k]);
+  }
+  if (!swaps.size) return text;
+  const all = new RegExp(`(?<![\\d.,])(${[...swaps.keys()].map(v => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?!\\d|[.,]\\d)`, 'g');
+  return text.replace(all, m => swaps.get(m) ?? m);
+}
+// "Cash", or "Cash + DMI Finance" / "DMI Finance (finance)" for a financed bill.
+export function paymentLabel(invoice) {
+  const mode = invoice.payment?.mode || 'Cash', f = invoice.finance;
+  if (!f?.name) return mode;
+  return calcInvoice(invoice).downPayment > 0.004 ? `${mode} + ${f.name}` : `${f.name} (finance)`;
+}
+
 export const $ = id => document.getElementById(id);
 export function uid() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, '').slice(0, 20);
@@ -86,11 +163,15 @@ export function calcInvoice(invoice, fallbackRoundUp = false) {
   const total = sum('lineTotal');
   const roundUp = invoice.roundUp !== undefined ? Boolean(invoice.roundUp) : fallbackRoundUp;
   const grandTotal = roundUp ? Math.round(total) : Math.round(total * 100) / 100;
-  const received = invoice.status === 'cancelled' ? 0 : Math.min(grandTotal, Math.max(0, Number(invoice.payment?.received) || 0));
+  // On a financed bill, `payment.received` is the customer's down payment and the finance company pays `finance.amount`.
+  const cancelled = invoice.status === 'cancelled';
+  const financeAmount = cancelled || !invoice.finance?.name ? 0 : Math.min(grandTotal, Math.max(0, Number(invoice.finance.amount) || 0));
+  const downPayment = cancelled ? 0 : Math.min(grandTotal - financeAmount, Math.max(0, Number(invoice.payment?.received) || 0));
+  const received = downPayment + financeAmount;
   return {
     items, inter, net: sum('net'), sgst: sum('sgst'), cgst: sum('cgst'), igst: sum('igst'), tax: sum('tax'), discount: sum('discount'),
     qty: items.reduce((s, i) => s + (Number(i.quantity) || 0), 0), total, roundOff: grandTotal - total, grandTotal,
-    received, balance: invoice.status === 'cancelled' ? 0 : Math.max(0, grandTotal - received)
+    received, downPayment, financeAmount, balance: cancelled ? 0 : Math.max(0, grandTotal - received)
   };
 }
 export function paymentStatus(invoice) {
@@ -131,7 +212,7 @@ export function migrateInvoice(raw) {
     businessAddress: cleanText(invoice.businessAddress, 300), businessPhone: cleanText(invoice.businessPhone, 80),
     state: cleanText(invoice.state, 50), stateCode: cleanText(invoice.stateCode, 10), roundUp: Boolean(invoice.roundUp),
     businessEmail: cleanText(invoice.businessEmail, 120), bankDetails: cleanText(invoice.bankDetails, 400), terms: cleanText(invoice.terms, 400),
-    notes: cleanText(invoice.notes, 500), createdBy: cleanText(invoice.createdBy, 120), updatedBy: cleanText(invoice.updatedBy, 120)
+    notes: cleanText(invoice.notes, NARRATION_MAX), finance: cleanFinance(invoice.finance), createdBy: cleanText(invoice.createdBy, 120), updatedBy: cleanText(invoice.updatedBy, 120)
   };
   const grand = calcInvoice({ ...out, payment: { received: 0 } }).grandTotal;
   // Bills from older versions had no payment info: they were cash sales, so treat them as fully paid.
@@ -171,6 +252,7 @@ export function cleanSettings(raw) {
   if (!out.businessName) out.businessName = BUSINESS_DEFAULTS.businessName;
   out.signature = cleanSignature(s.signature);
   out.second = cleanSecondShop(s.second);
+  out.finances = cleanFinances(s.finances);
   return out;
 }
 export function cleanSecondShop(raw) {
@@ -202,6 +284,13 @@ export function validateInvoice(inv) {
     if (!(it.price > 0) || it.price > 10000000) errors.push(`Item ${i + 1}: enter a valid ${inv.noGst ? '' : 'GST-inclusive '}price.`);
     if (it.discount < 0 || it.discount > it.price * it.quantity) errors.push(`Item ${i + 1}: discount can't be more than the line amount.`);
   });
+  if (inv.finance) {
+    const grand = calcInvoice({ ...inv, finance: null, payment: { received: 0 } }).grandTotal;
+    if (!inv.finance.name) errors.push('Choose the finance company.');
+    else if (!(inv.finance.amount > 0)) errors.push(`Enter the finance amount (paid by ${inv.finance.name}).`);
+    else if (inv.finance.amount > grand + 0.004) errors.push('The finance amount can\'t be more than the bill total.');
+  }
+  if ((inv.notes || '').length > NARRATION_MAX) errors.push(`Narration can be at most ${NARRATION_MAX} characters.`);
   return errors;
 }
 
